@@ -1,0 +1,119 @@
+{% extends "publications/base.html" %}
+{% load pub_extras %}
+{% block title %}Search — Yeo Lab Publications{% endblock %}
+
+{% block content %}
+<h1 class="text-xl font-bold text-ucsd-blue mb-4">Search Publications</h1>
+
+<!-- Search form -->
+<form method="get" class="bg-white rounded-lg shadow-sm border p-4 mb-6">
+  <div class="grid md:grid-cols-4 gap-3">
+    <div class="md:col-span-2">
+      <label class="block text-xs font-medium text-gray-500 mb-1">Keywords</label>
+      <input type="text" name="q" value="{{ query }}" placeholder="Title, abstract, journal…"
+             class="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-gray-500 mb-1">Author</label>
+      <input type="text" name="author" value="{{ author_q }}" placeholder="Last or first name"
+             class="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-gray-500 mb-1">Year</label>
+      <select name="year" class="w-full px-3 py-2 border rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+        <option value="">All years</option>
+        {% for y in years %}
+        <option value="{{ y }}" {% if y|stringformat:"d" == year %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="grid md:grid-cols-4 gap-3 mt-3">
+    <div class="md:col-span-2">
+      <label class="block text-xs font-medium text-gray-500 mb-1">Journal</label>
+      <select name="journal" class="w-full px-3 py-2 border rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+        <option value="">All journals</option>
+        {% for j in journals %}
+        <option value="{{ j.journal_name }}" {% if j.journal_name == journal %}selected{% endif %}>
+          {{ j.journal_name }} ({{ j.count }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="md:col-span-2 flex items-end gap-2">
+      <button type="submit"
+              class="px-5 py-2 bg-ucsd-sky text-white rounded text-sm font-medium hover:bg-ucsd-blue transition">
+        Search
+      </button>
+      <a href="{% url 'publications:search' %}"
+         class="px-5 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50">
+        Clear
+      </a>
+    </div>
+  </div>
+</form>
+
+<!-- Results -->
+<div class="text-sm text-gray-500 mb-3">
+  {{ total }} result{{ total|pluralize }} found
+  {% if query %}for <strong>"{{ query }}"</strong>{% endif %}
+</div>
+
+{% for pub in page %}
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-3 hover:shadow-md transition">
+  <div class="flex items-start justify-between gap-3">
+    <div class="flex-1">
+      <a href="{% url 'publications:publication_detail' pub.pmid %}"
+         class="text-ucsd-sky font-semibold hover:underline text-sm leading-snug">
+        {{ pub.title }}
+      </a>
+      <div class="text-xs text-gray-500 mt-1">
+        <span class="font-medium text-gray-700">{{ pub.journal_name }}</span>
+        {% if pub.pub_year %}&middot; {{ pub.pub_year }}{% endif %}
+        {% if pub.volume %}&middot; {{ pub.volume }}{% if pub.issue %}({{ pub.issue }}){% endif %}{% endif %}
+        {% if pub.pages %}: {{ pub.pages }}{% endif %}
+      </div>
+      {% if pub.abstract %}
+      <p class="text-xs text-gray-600 mt-2 line-clamp-2">{{ pub.abstract|truncatewords:40 }}</p>
+      {% endif %}
+    </div>
+    <div class="text-right flex-shrink-0 space-y-1">
+      <span class="inline-block text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono">
+        {{ pub.pmid }}
+      </span>
+      {% if pub.doi %}
+      <div>
+        <a href="{{ pub.doi_url }}" target="_blank" rel="noopener"
+           class="text-xs text-ucsd-sky hover:underline">DOI</a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% empty %}
+<div class="text-center text-gray-400 py-12">
+  {% if query or year or journal or author_q %}
+  No publications match your search. Try broadening your criteria.
+  {% else %}
+  Enter a search term to find publications.
+  {% endif %}
+</div>
+{% endfor %}
+
+<!-- Pagination -->
+{% if page.has_other_pages %}
+<div class="flex justify-center gap-2 mt-6">
+  {% if page.has_previous %}
+  <a href="{% query_string page=page.previous_page_number %}"
+     class="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">&laquo; Prev</a>
+  {% endif %}
+  <span class="px-3 py-1.5 text-sm text-gray-500">
+    Page {{ page.number }} of {{ page.paginator.num_pages }}
+  </span>
+  {% if page.has_next %}
+  <a href="{% query_string page=page.next_page_number %}"
+     class="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">Next &raquo;</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
