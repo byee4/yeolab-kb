@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: yeolab_publications
+      POSTGRES_USER: yeolab
+      POSTGRES_PASSWORD: yeolab_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema/postgres_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yeolab -d yeolab_publications"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120
+             --access-logfile - --error-logfile -
+             yeolab_search.wsgi:application"
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://yeolab:yeolab_dev_password@db:5432/yeolab_publications
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-production
+      DJANGO_DEBUG: "True"
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0"
+      GLOBUS_CLIENT_ID: ${GLOBUS_CLIENT_ID:-}
+      GLOBUS_CLIENT_SECRET: ${GLOBUS_CLIENT_SECRET:-}
+    volumes:
+      - ./yeolab_search:/app/yeolab_search
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Optional: run data migration from SQLite
+  migrate-data:
+    build: .
+    working_dir: /app
+    command: >
+      python scripts/migrate_sqlite_to_postgres.py
+        --sqlite yeolab_publications.db
+        --postgres "postgresql://yeolab:yeolab_dev_password@db:5432/yeolab_publications"
+    volumes:
+      - ./yeolab_publications.db:/app/yeolab_publications.db:ro
+      - ./scripts:/app/scripts:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - migrate
+
+volumes:
+  postgres_data:

@@ -1,0 +1,61 @@
+{% extends "publications/base.html" %}
+{% load pub_extras %}
+{% block title %}Authors — Yeo Lab Publications{% endblock %}
+
+{% block content %}
+<h1 class="text-xl font-bold text-ucsd-blue mb-4">Authors ({{ total }})</h1>
+
+<form method="get" class="mb-6">
+  <div class="flex max-w-md">
+    <input type="text" name="q" value="{{ q }}" placeholder="Filter by name…"
+           class="flex-1 px-3 py-2 border rounded-l text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+    <button type="submit" class="px-4 py-2 bg-ucsd-sky text-white rounded-r text-sm hover:bg-ucsd-blue transition">
+      Filter
+    </button>
+  </div>
+</form>
+
+<div class="bg-white rounded-lg shadow-sm border overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+      <tr>
+        <th class="text-left px-4 py-2">Name</th>
+        <th class="text-left px-4 py-2">ORCID</th>
+        <th class="text-right px-4 py-2">Papers</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in page %}
+      <tr class="border-t hover:bg-gray-50">
+        <td class="px-4 py-2">
+          <a href="{% url 'publications:author_detail' a.author_id %}"
+             class="text-ucsd-sky hover:underline font-medium">
+            {{ a.fore_name }} {{ a.last_name }}
+          </a>
+        </td>
+        <td class="px-4 py-2 text-xs text-gray-400 font-mono">
+          {% if a.orcid %}{{ a.orcid }}{% endif %}
+        </td>
+        <td class="px-4 py-2 text-right font-mono">{{ a.pub_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if page.has_other_pages %}
+<div class="flex justify-center gap-2 mt-6">
+  {% if page.has_previous %}
+  <a href="{% query_string page=page.previous_page_number %}"
+     class="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">&laquo; Prev</a>
+  {% endif %}
+  <span class="px-3 py-1.5 text-sm text-gray-500">
+    Page {{ page.number }} of {{ page.paginator.num_pages }}
+  </span>
+  {% if page.has_next %}
+  <a href="{% query_string page=page.next_page_number %}"
+     class="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">Next &raquo;</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

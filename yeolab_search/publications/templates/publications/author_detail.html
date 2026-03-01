@@ -1,0 +1,61 @@
+{% extends "publications/base.html" %}
+{% block title %}{{ author.display_name }} — Yeo Lab{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <a href="{% url 'publications:author_list' %}" class="text-sm text-ucsd-sky hover:underline">&larr; All authors</a>
+</div>
+
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <h1 class="text-xl font-bold text-ucsd-blue mb-1">{{ author.display_name }}</h1>
+  {% if author.orcid %}
+  <a href="https://orcid.org/{{ author.orcid }}" target="_blank"
+     class="text-xs text-ucsd-sky hover:underline">ORCID: {{ author.orcid }}</a>
+  {% endif %}
+
+  <div class="flex gap-6 mt-4 text-sm">
+    <div class="text-center">
+      <div class="text-2xl font-bold text-ucsd-blue">{{ total_pubs }}</div>
+      <div class="text-xs text-gray-500">Publications</div>
+    </div>
+    <div class="text-center">
+      <div class="text-2xl font-bold text-ucsd-blue">{{ first_author_count }}</div>
+      <div class="text-xs text-gray-500">First Author</div>
+    </div>
+    <div class="text-center">
+      <div class="text-2xl font-bold text-ucsd-blue">{{ last_author_count }}</div>
+      <div class="text-xs text-gray-500">Last Author</div>
+    </div>
+  </div>
+</div>
+
+<!-- Top co-authors -->
+{% if coauthors %}
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Top Co-Authors</h2>
+  <div class="flex flex-wrap gap-2">
+    {% for ca in coauthors %}
+    <a href="{% url 'publications:author_detail' ca.author__author_id %}"
+       class="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-ucsd-sky hover:text-white transition">
+      {{ ca.author__fore_name }} {{ ca.author__last_name }}
+      <span class="text-gray-400 ml-0.5">({{ ca.shared }})</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Publications list -->
+<h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Publications</h2>
+{% for pub in publications %}
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-2 hover:shadow-md transition">
+  <a href="{% url 'publications:publication_detail' pub.pmid %}"
+     class="text-sm text-ucsd-sky font-semibold hover:underline leading-snug">
+    {{ pub.title }}
+  </a>
+  <div class="text-xs text-gray-500 mt-1">
+    {{ pub.journal_name }} &middot; {{ pub.pub_year }}
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

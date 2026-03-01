@@ -1,0 +1,706 @@
+{% extends "publications/base.html" %}
+{% block title %}Chat — Yeo Lab Publications{% endblock %}
+
+{% block content %}
+<div class="flex flex-col" style="height: calc(100vh - 160px);">
+
+  <!-- API Key bar -->
+  <div id="api-key-bar" class="bg-white rounded-lg shadow-sm border p-4 mb-4">
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="text-sm font-medium text-gray-700">Provider</label>
+        <select id="provider-select"
+                class="px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky"
+                onchange="onProviderChange()">
+          <option value="claude">Claude (Anthropic)</option>
+          <option value="openai">ChatGPT (OpenAI)</option>
+        </select>
+        <label class="text-sm font-medium text-gray-700">Model</label>
+        <input type="text" id="model-input"
+               class="w-64 px-2 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ucsd-sky"
+               placeholder="claude-sonnet-4-20250514">
+        <select id="model-presets"
+                class="px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky"
+                onchange="onModelPresetChange()"></select>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <label id="api-key-label" class="text-sm font-medium text-gray-700 whitespace-nowrap">Anthropic API Key</label>
+        <input type="password" id="api-key-input" placeholder="sk-ant-..."
+               class="flex-1 max-w-md px-3 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+        <button onclick="saveApiKey()"
+                class="px-3 py-1.5 bg-ucsd-sky text-white text-xs rounded hover:bg-ucsd-blue transition">
+          Save
+        </button>
+        <button onclick="clearApiKey()"
+                class="px-3 py-1.5 bg-gray-200 text-gray-600 text-xs rounded hover:bg-gray-300 transition">
+          Clear
+        </button>
+        <span id="key-status" class="text-xs px-2 py-1 rounded"></span>
+      </div>
+    </div>
+    <p class="text-xs text-gray-400 mt-2">
+      Your key is stored only in this browser's localStorage and used only to call the selected provider.
+      It is never persisted on our server.
+    </p>
+  </div>
+
+  <div class="bg-white rounded-lg shadow-sm border p-3 mb-4 flex flex-wrap items-center gap-2">
+    <button onclick="startNewChat()"
+            class="px-3 py-1.5 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200 transition">
+      New chat
+    </button>
+    <label class="text-xs font-medium text-gray-600">History</label>
+    <select id="chat-history-select"
+            class="min-w-64 px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-ucsd-sky"
+            onchange="loadSelectedChat()">
+      <option value="">Current chat</option>
+    </select>
+  </div>
+
+  <!-- Chat messages -->
+  <div id="chat-messages" class="flex-1 overflow-y-auto bg-white rounded-lg shadow-sm border p-4 mb-4 space-y-4">
+    <!-- Starter prompts (shown when empty) -->
+    <div id="starter-prompts" class="flex flex-col items-center justify-center h-full text-center">
+      <div class="text-gray-400 mb-6">
+        <svg class="mx-auto mb-3 w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+        </svg>
+        <p class="text-sm font-medium">Ask questions about Yeo Lab publications</p>
+        <p class="text-xs mt-1">Claude or ChatGPT can search publications, authors, datasets, and grants</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-w-lg">
+        <button onclick="sendStarter(this)" class="text-left text-xs bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition">
+          What are the lab's most recent publications?
+        </button>
+        <button onclick="sendStarter(this)" class="text-left text-xs bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition">
+          Which datasets use eCLIP?
+        </button>
+        <button onclick="sendStarter(this)" class="text-left text-xs bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition">
+          Who are the top collaborators?
+        </button>
+        <button onclick="sendStarter(this)" class="text-left text-xs bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition">
+          Summarize the lab's work on TDP-43
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input area -->
+  <div class="bg-white rounded-lg shadow-sm border p-3">
+    <div class="flex gap-2">
+      <input type="text" id="chat-input" placeholder="Ask about publications, authors, datasets..."
+             class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky"
+             disabled
+             onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendMessage();}">
+      <button onclick="sendMessage()" id="send-btn"
+              class="px-4 py-2 bg-ucsd-sky text-white text-sm rounded hover:bg-ucsd-blue transition disabled:opacity-50"
+              disabled>
+        Send
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const csrfToken = '{{ csrf_token }}';
+let conversationHistory = [];
+let isStreaming = false;
+let currentChatId = null;
+const CHAT_HISTORY_STORAGE_KEY = 'yeolab_chat_history_v1';
+const MAX_SAVED_CHATS = 40;
+const MODEL_OPTIONS = {
+  claude: [
+    'claude-sonnet-4-20250514',
+    'claude-3-7-sonnet-latest',
+    'claude-3-5-haiku-latest',
+  ],
+  openai: [
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-4.1',
+    'gpt-4o',
+  ],
+};
+const PROVIDER_META = {
+  claude: {
+    label: 'Anthropic API Key',
+    placeholder: 'sk-ant-...',
+    storageKey: 'anthropic_api_key',
+    keyUrl: 'https://console.anthropic.com/settings/keys',
+  },
+  openai: {
+    label: 'OpenAI API Key',
+    placeholder: 'sk-...',
+    storageKey: 'openai_api_key',
+    keyUrl: 'https://platform.openai.com/api-keys',
+  },
+};
+
+// =============================================
+// API Key Management
+// =============================================
+function getProvider() {
+  return document.getElementById('provider-select').value;
+}
+
+function getModel() {
+  return document.getElementById('model-input').value.trim();
+}
+
+function getApiKey() {
+  const provider = getProvider();
+  const storageKey = PROVIDER_META[provider].storageKey;
+  return localStorage.getItem(storageKey) || '';
+}
+
+function populateModelPresets(provider) {
+  const presets = MODEL_OPTIONS[provider] || [];
+  const select = document.getElementById('model-presets');
+  select.innerHTML = '';
+  for (const model of presets) {
+    const option = document.createElement('option');
+    option.value = model;
+    option.textContent = model;
+    select.appendChild(option);
+  }
+  const modelInput = document.getElementById('model-input');
+  if (!modelInput.value.trim() || !presets.includes(modelInput.value.trim())) {
+    modelInput.value = presets[0] || '';
+  }
+  select.value = modelInput.value.trim();
+}
+
+function onModelPresetChange() {
+  const select = document.getElementById('model-presets');
+  document.getElementById('model-input').value = select.value;
+}
+
+function onProviderChange() {
+  const provider = getProvider();
+  const meta = PROVIDER_META[provider];
+  const keyInput = document.getElementById('api-key-input');
+  const label = document.getElementById('api-key-label');
+  label.textContent = meta.label;
+  keyInput.placeholder = meta.placeholder;
+  keyInput.value = '';
+
+  localStorage.setItem('chat_provider', provider);
+  populateModelPresets(provider);
+
+  const key = getApiKey();
+  if (key) {
+    updateKeyStatus('Key saved', true);
+    enableChat();
+  } else {
+    updateKeyStatus('No key', false);
+    disableChat();
+  }
+}
+
+function saveApiKey() {
+  const input = document.getElementById('api-key-input');
+  const key = input.value.trim();
+  const provider = getProvider();
+  const storageKey = PROVIDER_META[provider].storageKey;
+  if (!key) return;
+  if (provider === 'claude' && !key.startsWith('sk-')) {
+    updateKeyStatus('Invalid Claude key', false);
+    return;
+  }
+  if (provider === 'openai' && !key.startsWith('sk-')) {
+    updateKeyStatus('Invalid format', false);
+    return;
+  }
+  localStorage.setItem(storageKey, key);
+  input.value = '';
+  updateKeyStatus('Key saved', true);
+  enableChat();
+}
+
+function clearApiKey() {
+  const provider = getProvider();
+  localStorage.removeItem(PROVIDER_META[provider].storageKey);
+  document.getElementById('api-key-input').value = '';
+  updateKeyStatus('No key', false);
+  disableChat();
+}
+
+function updateKeyStatus(text, ok) {
+  const el = document.getElementById('key-status');
+  el.textContent = text;
+  el.className = ok
+    ? 'text-xs px-2 py-1 rounded bg-green-100 text-green-700'
+    : 'text-xs px-2 py-1 rounded bg-gray-100 text-gray-500';
+}
+
+function enableChat() {
+  document.getElementById('chat-input').disabled = false;
+  document.getElementById('send-btn').disabled = false;
+  document.getElementById('chat-input').focus();
+}
+
+function disableChat() {
+  document.getElementById('chat-input').disabled = true;
+  document.getElementById('send-btn').disabled = true;
+}
+
+// =============================================
+// Chat History Storage
+// =============================================
+function loadSavedChats() {
+  try {
+    const raw = localStorage.getItem(CHAT_HISTORY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(chat => chat && chat.id && Array.isArray(chat.messages));
+  } catch {
+    return [];
+  }
+}
+
+function saveSavedChats(chats) {
+  localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(chats.slice(0, MAX_SAVED_CHATS)));
+}
+
+function chatTitleFromMessages(messages) {
+  const firstUser = messages.find(m => m.role === 'user' && typeof m.content === 'string');
+  if (!firstUser) return 'Untitled chat';
+  const text = firstUser.content.trim();
+  return text.length > 64 ? `${text.slice(0, 64)}...` : text;
+}
+
+function formatChatLabel(chat) {
+  const dt = new Date(chat.updated_at || chat.created_at || Date.now());
+  const stamp = dt.toLocaleString();
+  return `${chat.title || 'Untitled chat'} (${stamp})`;
+}
+
+function renderHistoryDropdown() {
+  const select = document.getElementById('chat-history-select');
+  const chats = loadSavedChats().sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  select.innerHTML = '<option value="">Current chat</option>';
+  for (const chat of chats) {
+    const option = document.createElement('option');
+    option.value = chat.id;
+    option.textContent = formatChatLabel(chat);
+    if (currentChatId === chat.id) option.selected = true;
+    select.appendChild(option);
+  }
+}
+
+function persistCurrentChat() {
+  if (!conversationHistory.length) return;
+
+  const provider = getProvider();
+  const model = getModel();
+  const now = Date.now();
+  const chats = loadSavedChats();
+  if (!currentChatId) currentChatId = `chat_${now}_${Math.random().toString(36).slice(2, 10)}`;
+
+  const existingIndex = chats.findIndex(c => c.id === currentChatId);
+  const record = {
+    id: currentChatId,
+    title: chatTitleFromMessages(conversationHistory),
+    provider,
+    model,
+    created_at: existingIndex >= 0 ? chats[existingIndex].created_at : now,
+    updated_at: now,
+    messages: conversationHistory.slice(-20),
+  };
+
+  if (existingIndex >= 0) chats[existingIndex] = record;
+  else chats.unshift(record);
+
+  chats.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  saveSavedChats(chats);
+  renderHistoryDropdown();
+}
+
+function showStarters() {
+  const starters = document.getElementById('starter-prompts');
+  if (starters) starters.style.display = 'flex';
+}
+
+function clearChatView() {
+  const container = document.getElementById('chat-messages');
+  container.innerHTML = '';
+  const starters = document.createElement('div');
+  starters.id = 'starter-prompts';
+  starters.className = 'flex flex-col items-center justify-center h-full text-center';
+  starters.innerHTML = `
+      <div class="text-gray-400 mb-6">
+        <svg class="mx-auto mb-3 w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+        </svg>
+        <p class="text-sm font-medium">Ask questions about Yeo Lab publications</p>
+        <p class="text-xs mt-1">Claude or ChatGPT can search publications, authors, datasets, and grants</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-w-lg">
+        <button onclick="sendStarter(this)" class="text-left text-xs bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition">
+          What are the lab's most recent publications?
+        </button>
+        <button onclick="sendStarter(this)" class="text-left text-xs bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition">
+          Which datasets use eCLIP?
+        </button>
+        <button onclick="sendStarter(this)" class="text-left text-xs bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition">
+          Who are the top collaborators?
+        </button>
+        <button onclick="sendStarter(this)" class="text-left text-xs bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition">
+          Summarize the lab's work on TDP-43
+        </button>
+      </div>
+  `;
+  container.appendChild(starters);
+  showStarters();
+}
+
+function renderConversationFromHistory() {
+  clearChatView();
+  if (!conversationHistory.length) return;
+
+  for (const msg of conversationHistory) {
+    if (msg.role === 'user') {
+      appendUserMessage(msg.content || '');
+    } else if (msg.role === 'assistant') {
+      hideStarters();
+      const container = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = 'flex justify-start';
+      const bubble = document.createElement('div');
+      bubble.className = 'max-w-2xl bg-gray-50 border rounded-lg px-4 py-2 text-sm text-gray-800 assistant-bubble';
+      bubble.innerHTML = `<div class="response-text">${renderMarkdown(msg.content || '')}</div>`;
+      div.appendChild(bubble);
+      container.appendChild(div);
+    }
+  }
+  scrollToBottom();
+}
+
+function startNewChat() {
+  currentChatId = null;
+  conversationHistory = [];
+  document.getElementById('chat-history-select').value = '';
+  clearChatView();
+  document.getElementById('chat-input').focus();
+}
+
+function loadSelectedChat() {
+  const selectedId = document.getElementById('chat-history-select').value;
+  if (!selectedId) {
+    startNewChat();
+    return;
+  }
+  const chats = loadSavedChats();
+  const chat = chats.find(c => c.id === selectedId);
+  if (!chat) return;
+
+  currentChatId = chat.id;
+  conversationHistory = (chat.messages || []).slice(-20);
+
+  if (chat.provider && (chat.provider === 'claude' || chat.provider === 'openai')) {
+    document.getElementById('provider-select').value = chat.provider;
+    onProviderChange();
+  }
+  if (chat.model) {
+    document.getElementById('model-input').value = chat.model;
+    const presets = document.getElementById('model-presets');
+    if ([...presets.options].some(o => o.value === chat.model)) {
+      presets.value = chat.model;
+    }
+  }
+  renderConversationFromHistory();
+}
+
+// =============================================
+// Message Rendering
+// =============================================
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+function renderMarkdown(text) {
+  // Lightweight markdown: bold, inline code, code blocks, links, line breaks
+  let html = escapeHtml(text);
+  // Code blocks (```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-gray-100 rounded p-2 text-xs font-mono overflow-x-auto my-2">$2</pre>');
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code class="bg-gray-100 px-1 rounded text-xs font-mono">$1</code>');
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Links [text](url)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-ucsd-sky hover:underline">$1</a>');
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<h4 class="font-semibold text-sm mt-3 mb-1">$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3 class="font-semibold mt-3 mb-1">$1</h3>');
+  // Bullet lists
+  html = html.replace(/^- (.+)$/gm, '<li class="ml-4 list-disc">$1</li>');
+  html = html.replace(/(<li[^>]*>.*<\/li>\n?)+/g, '<ul class="my-1 text-sm">$&</ul>');
+  // Numbered lists
+  html = html.replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal">$1</li>');
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+  // Clean up double <br> inside <pre>
+  html = html.replace(/<pre([^>]*)>([\s\S]*?)<\/pre>/g, (m, attrs, content) => {
+    return '<pre' + attrs + '>' + content.replace(/<br>/g, '\n') + '</pre>';
+  });
+  return html;
+}
+
+function appendUserMessage(text) {
+  hideStarters();
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'flex justify-end';
+  div.innerHTML = `<div class="max-w-xl bg-ucsd-sky text-white rounded-lg px-4 py-2 text-sm">${escapeHtml(text)}</div>`;
+  container.appendChild(div);
+  scrollToBottom();
+}
+
+function createAssistantBubble() {
+  hideStarters();
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'flex justify-start';
+  const bubble = document.createElement('div');
+  bubble.className = 'max-w-2xl bg-gray-50 border rounded-lg px-4 py-2 text-sm text-gray-800 assistant-bubble';
+  bubble.innerHTML = '<span class="typing-indicator text-gray-400">Thinking...</span>';
+  div.appendChild(bubble);
+  container.appendChild(div);
+  scrollToBottom();
+  return bubble;
+}
+
+function appendToolActivity(bubble, name, input, result) {
+  // Show tool usage as a small inline card
+  const toolDiv = document.createElement('div');
+  toolDiv.className = 'my-2 bg-white border border-gray-200 rounded px-3 py-2 text-xs text-gray-500';
+
+  const friendlyName = name.replace(/_/g, ' ');
+  let inputSummary = '';
+  if (input.query) inputSummary = ` "${input.query}"`;
+  else if (input.pmid) inputSummary = ` PMID ${input.pmid}`;
+  else if (input.accession) inputSummary = ` ${input.accession}`;
+  else if (input.author_id) inputSummary = ` #${input.author_id}`;
+
+  let resultSummary = '';
+  if (result && result.count !== undefined) {
+    resultSummary = ` → ${result.count} result(s)`;
+  } else if (result && result.error) {
+    resultSummary = ` → ${result.error}`;
+  } else if (result && result.title) {
+    resultSummary = ` → "${result.title.substring(0, 60)}..."`;
+  } else if (result && result.counts) {
+    resultSummary = ` → ${result.counts.publications} pubs, ${result.counts.datasets} datasets`;
+  }
+
+  toolDiv.innerHTML = `<span class="font-medium text-gray-600">⚙ ${escapeHtml(friendlyName)}</span>${escapeHtml(inputSummary)}${escapeHtml(resultSummary)}`;
+  bubble.appendChild(toolDiv);
+  scrollToBottom();
+}
+
+function hideStarters() {
+  const starters = document.getElementById('starter-prompts');
+  if (starters) starters.style.display = 'none';
+}
+
+function scrollToBottom() {
+  const container = document.getElementById('chat-messages');
+  container.scrollTop = container.scrollHeight;
+}
+
+// =============================================
+// Chat Logic
+// =============================================
+function sendStarter(btn) {
+  const text = btn.textContent.trim();
+  const key = getApiKey();
+  const model = getModel();
+  if (!key) {
+    updateKeyStatus('Enter key first', false);
+    document.getElementById('api-key-input').focus();
+    return;
+  }
+  if (!model) {
+    updateKeyStatus('Select a model', false);
+    document.getElementById('model-input').focus();
+    return;
+  }
+  document.getElementById('chat-input').value = text;
+  sendMessage();
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text || isStreaming) return;
+
+  const apiKey = getApiKey();
+  const provider = getProvider();
+  const model = getModel();
+  if (!apiKey) {
+    updateKeyStatus('Enter key first', false);
+    document.getElementById('api-key-input').focus();
+    return;
+  }
+  if (!model) {
+    updateKeyStatus('Select a model', false);
+    document.getElementById('model-input').focus();
+    return;
+  }
+
+  // Show user message
+  appendUserMessage(text);
+  input.value = '';
+
+  // Create assistant bubble
+  const bubble = createAssistantBubble();
+  isStreaming = true;
+  document.getElementById('send-btn').disabled = true;
+
+  let assistantText = '';
+  let typingRemoved = false;
+
+  try {
+    const response = await fetch('{% url "publications:api_chat" %}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        provider: provider,
+        model: model,
+        message: text,
+        history: conversationHistory,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // Keep incomplete line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6);
+        if (!jsonStr) continue;
+
+        let data;
+        try {
+          data = JSON.parse(jsonStr);
+        } catch { continue; }
+
+        if (data.type === 'text') {
+          if (!typingRemoved) {
+            const ti = bubble.querySelector('.typing-indicator');
+            if (ti) ti.remove();
+            typingRemoved = true;
+          }
+          assistantText += data.content;
+          // Re-render the full text (handles markdown correctly)
+          // Find or create the text span
+          let textSpan = bubble.querySelector('.response-text');
+          if (!textSpan) {
+            textSpan = document.createElement('div');
+            textSpan.className = 'response-text';
+            bubble.appendChild(textSpan);
+          }
+          textSpan.innerHTML = renderMarkdown(assistantText);
+          scrollToBottom();
+        }
+        else if (data.type === 'tool_use') {
+          if (!typingRemoved) {
+            const ti = bubble.querySelector('.typing-indicator');
+            if (ti) ti.remove();
+            typingRemoved = true;
+          }
+          // We'll show the tool result when it comes
+          bubble._pendingTool = { name: data.name, input: data.input };
+        }
+        else if (data.type === 'tool_result') {
+          appendToolActivity(bubble, data.name, bubble._pendingTool?.input || {}, data.result);
+          // Add a new typing indicator for the continued response
+          const ti = document.createElement('span');
+          ti.className = 'typing-indicator text-gray-400';
+          ti.textContent = 'Thinking...';
+          bubble.appendChild(ti);
+          typingRemoved = false;
+        }
+        else if (data.type === 'done') {
+          // Remove any remaining typing indicator
+          const ti = bubble.querySelector('.typing-indicator');
+          if (ti) ti.remove();
+        }
+        else if (data.type === 'error') {
+          const ti = bubble.querySelector('.typing-indicator');
+          if (ti) ti.remove();
+          const errDiv = document.createElement('div');
+          errDiv.className = 'text-red-600 text-sm mt-1';
+          errDiv.textContent = data.message;
+          bubble.appendChild(errDiv);
+        }
+      }
+    }
+
+    // Update conversation history
+    conversationHistory.push({ role: 'user', content: text });
+    if (assistantText) {
+      conversationHistory.push({ role: 'assistant', content: assistantText });
+    }
+
+    // Keep history manageable (last 20 messages)
+    if (conversationHistory.length > 20) {
+      conversationHistory = conversationHistory.slice(-20);
+    }
+    persistCurrentChat();
+
+  } catch (err) {
+    const ti = bubble.querySelector('.typing-indicator');
+    if (ti) ti.remove();
+    const errDiv = document.createElement('div');
+    errDiv.className = 'text-red-600 text-sm';
+    errDiv.textContent = err.message || 'Request failed';
+    bubble.appendChild(errDiv);
+  } finally {
+    isStreaming = false;
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('chat-input').focus();
+  }
+}
+
+// =============================================
+// Init
+// =============================================
+(function init() {
+  const savedProvider = localStorage.getItem('chat_provider') || 'claude';
+  const providerSelect = document.getElementById('provider-select');
+  if (savedProvider === 'openai' || savedProvider === 'claude') {
+    providerSelect.value = savedProvider;
+  }
+  onProviderChange();
+  renderHistoryDropdown();
+})();
+</script>
+{% endblock %}

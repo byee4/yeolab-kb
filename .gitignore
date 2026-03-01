@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+*.egg
+
+# Django
+*.log
+db.sqlite3
+yeolab_search/staticfiles/
+
+# Database files (keep in separate storage, not git)
+*.db
+*.db-shm
+*.db-wal
+
+# Large JSON data files
+yeolab_geo_sra_results.json
+yeolab_encode_results.json
+pubmed_*.json
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+SOURCEME.sh
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+.coverage
+htmlcov/

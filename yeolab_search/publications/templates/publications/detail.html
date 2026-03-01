@@ -1,0 +1,204 @@
+{% extends "publications/base.html" %}
+{% load pub_extras %}
+{% block title %}{{ pub.title|truncatewords:10 }} — Yeo Lab{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <a href="{% url 'publications:search' %}" class="text-sm text-ucsd-sky hover:underline">&larr; Back to search</a>
+</div>
+
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <!-- Title -->
+  <h1 class="text-lg font-bold text-ucsd-blue leading-snug mb-3">{{ pub.title }}</h1>
+
+  <!-- Authors -->
+  <div class="text-sm text-gray-700 mb-3">
+    {% for pa in authors %}
+      <a href="{% url 'publications:author_detail' pa.author.author_id %}"
+         class="hover:text-ucsd-sky {% if pa.is_first_author or pa.is_last_author %}font-semibold{% endif %}">
+        {{ pa.author.display_name }}</a>{% if not forloop.last %}, {% endif %}
+    {% endfor %}
+  </div>
+
+  <!-- Journal / date -->
+  <div class="text-sm text-gray-500 mb-4">
+    <span class="font-medium text-gray-700">{{ pub.journal_name }}</span>
+    {% if pub.pub_year %}&middot; {{ pub.pub_year }}{% endif %}
+    {% if pub.volume %}&middot; Vol. {{ pub.volume }}{% endif %}
+    {% if pub.issue %}({{ pub.issue }}){% endif %}
+    {% if pub.pages %}&middot; pp. {{ pub.pages }}{% endif %}
+  </div>
+
+  <!-- External links -->
+  <div class="flex flex-wrap gap-2 mb-5">
+    <a href="{{ pub.pubmed_url }}" target="_blank" rel="noopener"
+       class="inline-flex items-center gap-1 px-3 py-1 bg-ucsd-blue text-white text-xs rounded hover:bg-ucsd-sky transition">
+      PubMed
+    </a>
+    {% if pub.doi %}
+    <a href="{{ pub.doi_url }}" target="_blank" rel="noopener"
+       class="inline-flex items-center gap-1 px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700 transition">
+      DOI
+    </a>
+    {% endif %}
+    {% if pub.pmc_id %}
+    <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/{{ pub.pmc_id }}/" target="_blank" rel="noopener"
+       class="inline-flex items-center gap-1 px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition">
+      PMC Full Text
+    </a>
+    {% endif %}
+  </div>
+
+  <!-- Abstract -->
+  {% if pub.abstract %}
+  <div class="mb-5">
+    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Abstract</h2>
+    <p class="text-sm text-gray-700 leading-relaxed">{{ pub.abstract }}</p>
+  </div>
+  {% endif %}
+
+  <!-- Metadata grid -->
+  <div class="grid md:grid-cols-2 gap-4 text-sm">
+    {% if pub.pub_types_list %}
+    <div>
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Publication Types</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for t in pub.pub_types_list %}
+        <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">{{ t }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if pub.keywords_list %}
+    <div>
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Keywords</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for k in pub.keywords_list %}
+        <a href="{% url 'publications:search' %}?q={{ k|urlencode }}"
+           class="px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-xs hover:bg-amber-100">{{ k }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if pub.mesh_terms_list %}
+    <div class="md:col-span-2">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">MeSH Terms</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for m in pub.mesh_terms_list %}
+        <span class="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">{{ m }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Grants -->
+{% if grants %}
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Funding</h2>
+  <div class="space-y-1">
+    {% for pg in grants %}
+    <div class="text-sm">
+      <span class="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">{{ pg.grant.grant_number }}</span>
+      <span class="text-gray-600 ml-1">{{ pg.grant.agency }}</span>
+      {% if pg.grant.country %}<span class="text-gray-400">({{ pg.grant.country }})</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Datasets (strong links) -->
+{% if datasets %}
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+    Linked Datasets ({{ datasets|length }})
+  </h2>
+  {% for pd in datasets %}
+  <div class="border-b last:border-0 py-3">
+    <div class="flex items-start justify-between">
+      <div>
+        <a href="{% url 'publications:dataset_detail' pd.accession.accession_id %}"
+           class="font-mono text-sm font-semibold text-ucsd-sky hover:underline">
+          {{ pd.accession.accession }}
+        </a>
+        <span class="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded ml-1">{{ pd.accession.accession_type }}</span>
+        <span class="text-xs text-gray-400 ml-1">via {{ pd.source }}</span>
+      </div>
+      {% if pd.accession.geo_url %}
+      <a href="{{ pd.accession.geo_url }}" target="_blank" class="text-xs text-ucsd-sky hover:underline">GEO</a>
+      {% endif %}
+    </div>
+    {% if pd.accession.title %}
+    <p class="text-xs text-gray-600 mt-1">{{ pd.accession.title|truncatewords:25 }}</p>
+    {% endif %}
+    {% if pd.accession.organism %}
+    <span class="text-xs text-gray-400">{{ pd.accession.organism }}</span>
+    {% endif %}
+
+    <!-- Files for this dataset -->
+    {% with file_list=files_by_acc|get_item:pd.accession.accession_id %}
+    {% if file_list %}
+    <details class="mt-2">
+      <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+        {{ file_list|length }} data file{{ file_list|length|pluralize }}
+      </summary>
+      <div class="mt-1 max-h-48 overflow-y-auto">
+        <table class="w-full text-xs">
+          <thead class="text-gray-400">
+            <tr><th class="text-left py-1">File</th><th class="text-left py-1">Type</th><th class="text-right py-1">Size</th></tr>
+          </thead>
+          <tbody>
+            {% for f in file_list %}
+            <tr class="border-t border-gray-100">
+              <td class="py-1 font-mono text-gray-700">{{ f.file_name|truncatechars:60 }}</td>
+              <td class="py-1 text-gray-500">{{ f.file_type }}</td>
+              <td class="py-1 text-right text-gray-500">{{ f.file_size_display }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
+    {% endwith %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Potentially related datasets (text-mined, lower confidence) -->
+{% if potential_datasets %}
+<div class="bg-white rounded-lg shadow-sm border border-amber-200 p-6 mb-6">
+  <h2 class="text-sm font-semibold text-amber-700 uppercase tracking-wide mb-1">
+    Potentially Related Datasets ({{ potential_datasets|length }})
+  </h2>
+  <p class="text-xs text-amber-600 mb-3">
+    These accessions were text-mined from the PMC full text. They may be referenced for comparison, cited from other studies, or otherwise mentioned without being primary data for this paper.
+  </p>
+  {% for pd in potential_datasets %}
+  <div class="border-b border-amber-100 last:border-0 py-2">
+    <div class="flex items-start justify-between">
+      <div>
+        <a href="{% url 'publications:dataset_detail' pd.accession.accession_id %}"
+           class="font-mono text-sm text-amber-700 hover:underline">
+          {{ pd.accession.accession }}
+        </a>
+        <span class="text-xs bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded ml-1">{{ pd.accession.accession_type }}</span>
+        <span class="text-xs text-gray-400 ml-1">{{ pd.accession.database }}</span>
+      </div>
+      {% if pd.accession.geo_url %}
+      <a href="{{ pd.accession.geo_url }}" target="_blank" class="text-xs text-ucsd-sky hover:underline">GEO</a>
+      {% endif %}
+    </div>
+    {% if pd.accession.title %}
+    <p class="text-xs text-gray-500 mt-1">{{ pd.accession.title|truncatewords:20 }}</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

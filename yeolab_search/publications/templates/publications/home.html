@@ -1,0 +1,100 @@
+{% extends "publications/base.html" %}
+{% block title %}Yeo Lab Publications — Home{% endblock %}
+
+{% block content %}
+<div class="text-center mt-8 mb-10">
+  <h1 class="text-3xl font-bold text-ucsd-blue mb-2">Yeo Lab Publications Database</h1>
+  <p class="text-gray-600 max-w-2xl mx-auto">
+    Search {{ stats.publications }} publications from Gene Yeo's lab at UC San Diego,
+    with {{ stats.datasets }} linked datasets and {{ stats.files|default:"0" }} data files.
+  </p>
+</div>
+
+<!-- Search bar -->
+<form action="{% url 'publications:search' %}" method="get" class="max-w-2xl mx-auto mb-12">
+  <div class="flex shadow-sm">
+    <input type="text" name="q" placeholder="Search titles, abstracts, journals…"
+           class="flex-1 px-4 py-3 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-ucsd-sky text-sm">
+    <button type="submit"
+            class="px-6 py-3 bg-ucsd-sky text-white font-medium rounded-r-lg hover:bg-ucsd-blue transition text-sm">
+      Search
+    </button>
+  </div>
+</form>
+
+<!-- Stats cards -->
+<div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-12">
+  {% for label, val in stats.items %}
+    {% if label != "year_data" and label != "top_journals" %}
+    <div class="bg-white rounded-lg shadow-sm border p-4 text-center">
+      <div class="text-2xl font-bold text-ucsd-blue">{{ val }}</div>
+      <div class="text-xs text-gray-500 uppercase tracking-wide mt-1">{{ label }}</div>
+    </div>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<!-- Chart + Top Journals side by side -->
+<div class="grid md:grid-cols-2 gap-8 mb-12">
+  <div class="bg-white rounded-lg shadow-sm border p-6">
+    <h2 class="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide">Publications by Year</h2>
+    <canvas id="yearChart" height="200"></canvas>
+  </div>
+  <div class="bg-white rounded-lg shadow-sm border p-6">
+    <h2 class="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide">Top Journals</h2>
+    <table class="w-full text-sm">
+      {% for j in stats.top_journals %}
+      <tr class="border-b last:border-0">
+        <td class="py-2 text-gray-700">
+          <a href="{% url 'publications:search' %}?journal={{ j.journal_name|urlencode }}"
+             class="hover:text-ucsd-sky">{{ j.journal_name }}</a>
+        </td>
+        <td class="py-2 text-right font-mono text-gray-500">{{ j.count }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+
+<!-- Quick links -->
+<div class="text-center text-sm text-gray-500 space-x-4">
+  <a href="{% url 'publications:search' %}?q=eCLIP" class="hover:text-ucsd-sky">eCLIP papers</a>
+  <span>&middot;</span>
+  <a href="{% url 'publications:search' %}?q=CRISPR" class="hover:text-ucsd-sky">CRISPR</a>
+  <span>&middot;</span>
+  <a href="{% url 'publications:search' %}?q=TDP-43" class="hover:text-ucsd-sky">TDP-43</a>
+  <span>&middot;</span>
+  <a href="{% url 'publications:search' %}?q=splicing" class="hover:text-ucsd-sky">Splicing</a>
+  <span>&middot;</span>
+  <a href="{% url 'publications:search' %}?q=RBFOX" class="hover:text-ucsd-sky">RBFOX</a>
+  <span>&middot;</span>
+  <a href="{% url 'publications:search' %}?q=iPSC" class="hover:text-ucsd-sky">iPSC</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+  const yearData = {{ stats.year_data|safe }};
+  new Chart(document.getElementById('yearChart'), {
+    type: 'bar',
+    data: {
+      labels: yearData.map(d => d.year),
+      datasets: [{
+        label: 'Publications',
+        data: yearData.map(d => d.count),
+        backgroundColor: '#006A96',
+        borderRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false } },
+        y: { beginAtZero: true, ticks: { stepSize: 5 } },
+      }
+    }
+  });
+</script>
+{% endblock %}
