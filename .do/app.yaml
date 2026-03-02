@@ -77,6 +77,8 @@ jobs:
       set -e;
       echo "Waiting for PostgreSQL to accept connections...";
       until pg_isready -d "$DATABASE_URL"; do sleep 2; done;
+      echo "Database role:";
+      psql "$DATABASE_URL" -Atc "SELECT current_user;";
       echo "Applying base schema...";
       psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /app/schema/postgres_schema.sql;
       cd /app/yeolab_search;
