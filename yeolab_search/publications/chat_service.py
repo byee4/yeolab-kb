@@ -139,6 +139,10 @@ def _stream_claude(api_key, user_message, conversation_history, model):
         return
 
     tool_rounds = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
 
     try:
         while tool_rounds <= MAX_TOOL_ROUNDS:
@@ -174,6 +178,23 @@ def _stream_claude(api_key, user_message, conversation_history, model):
 
                 # Get the final message for stop_reason
                 final_message = stream.get_final_message()
+
+            # Track token usage from this round
+            if hasattr(final_message, "usage") and final_message.usage:
+                total_input_tokens += getattr(final_message.usage, "input_tokens", 0)
+                total_output_tokens += getattr(final_message.usage, "output_tokens", 0)
+                cache_creation_tokens += getattr(final_message.usage, "cache_creation_input_tokens", 0)
+                cache_read_tokens += getattr(final_message.usage, "cache_read_input_tokens", 0)
+
+                yield _sse({
+                    "type": "usage",
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                    "cache_creation_tokens": cache_creation_tokens,
+                    "cache_read_tokens": cache_read_tokens,
+                    "model": model,
+                    "provider": "claude",
+                })
 
             # If no tool calls, we're done
             if final_message.stop_reason != "tool_use" or not tool_uses:
@@ -264,12 +285,15 @@ def _stream_openai(api_key, user_message, conversation_history, model):
         return
 
     tool_rounds = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
 
     try:
         while tool_rounds <= MAX_TOOL_ROUNDS:
             collected_text = ""
             tool_calls = {}
             finish_reason = None
+            round_usage = None
 
             stream = client.chat.completions.create(
                 model=model,
@@ -277,9 +301,14 @@ def _stream_openai(api_key, user_message, conversation_history, model):
                 tools=OPENAI_TOOL_DEFINITIONS,
                 tool_choice="auto",
                 stream=True,
+                stream_options={"include_usage": True},
             )
 
             for chunk in stream:
+                # Usage comes in a separate chunk with empty choices
+                if hasattr(chunk, "usage") and chunk.usage:
+                    round_usage = chunk.usage
+
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -307,6 +336,18 @@ def _stream_openai(api_key, user_message, conversation_history, model):
                                 tool_calls[idx]["name"] = tc.function.name
                             if tc.function.arguments:
                                 tool_calls[idx]["arguments_json"] += tc.function.arguments
+
+            # Track usage from this round
+            if round_usage:
+                total_prompt_tokens += getattr(round_usage, "prompt_tokens", 0)
+                total_completion_tokens += getattr(round_usage, "completion_tokens", 0)
+                yield _sse({
+                    "type": "usage",
+                    "input_tokens": total_prompt_tokens,
+                    "output_tokens": total_completion_tokens,
+                    "model": model,
+                    "provider": "openai",
+                })
 
             ordered_tool_calls = [tool_calls[i] for i in sorted(tool_calls.keys())]
 

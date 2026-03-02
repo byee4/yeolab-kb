@@ -6,6 +6,7 @@ app_name = "publications"
 urlpatterns = [
     # Web UI
     path("", views.home, name="home"),
+    path("healthz/", views.healthz, name="healthz"),
     path("search/", views.search, name="search"),
     path("pub/<str:pmid>/", views.publication_detail, name="publication_detail"),
     path("author/<int:author_id>/", views.author_detail, name="author_detail"),
@@ -13,6 +14,11 @@ urlpatterns = [
     path("datasets/", views.dataset_list, name="dataset_list"),
     path("dataset/<int:accession_id>/", views.dataset_detail, name="dataset_detail"),
     path("dataset/<int:accession_id>/download.sh", views.dataset_download_script, name="dataset_download_script"),
+    path("methods/", views.method_list, name="method_list"),
+    path("method/<int:method_id>/", views.method_detail, name="method_detail"),
+    path("analysis/", views.analysis_list, name="analysis_list"),
+    path("analysis/<int:pipeline_id>/", views.analysis_detail, name="analysis_detail"),
+    path("analysis/dataset/<str:accession>/", views.analysis_detail_by_accession, name="analysis_detail_by_accession"),
 
     # Admin / Update
     path("admin/", views.admin_panel, name="admin_panel"),
@@ -22,6 +28,15 @@ urlpatterns = [
     path("admin/confirm-add/", views.admin_confirm_add, name="admin_confirm_add"),
     path("admin/preview-remove/", views.admin_preview_remove, name="admin_preview_remove"),
     path("admin/confirm-remove/", views.admin_confirm_remove, name="admin_confirm_remove"),
+    path("admin/sync-code-examples/", views.admin_sync_code_examples, name="admin_sync_code_examples"),
+    path("admin/code-editor/", views.admin_code_editor, name="admin_code_editor"),
+    path("admin/code-editor/datasets/", views.admin_code_editor_datasets, name="admin_code_editor_datasets"),
+    path("admin/code-editor/dataset/<str:accession>/", views.admin_code_editor_dataset_content, name="admin_code_editor_dataset_content"),
+    path("admin/code-editor/fetch/", views.admin_code_editor_fetch, name="admin_code_editor_fetch"),
+    path("admin/code-editor/save/", views.admin_code_editor_save, name="admin_code_editor_save"),
+    path("admin/code-editor/push/", views.admin_code_editor_push, name="admin_code_editor_push"),
+    path("admin/code-editor/delete/", views.admin_code_editor_delete, name="admin_code_editor_delete"),
+    path("admin/code-editor/lookup-date/<str:accession>/", views.admin_code_editor_lookup_date, name="admin_code_editor_lookup_date"),
 
     # Chat
     path("chat/", views.chat_page, name="chat"),

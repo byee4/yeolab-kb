@@ -1507,3 +1507,1326 @@ def _scan_pmc_fulltext(rate, pmids):
             _rate_limit(rate)
 
     _log(f"Found {new_links} potentially related accession-publication links from full text")
+
+
+# ============================================================
+# Computational Methods Extraction
+# ============================================================
+
+# Comprehensive bioinformatics software/method dictionary
+# Format: canonical_name -> {aliases, category, url}
+_SOFTWARE_DICT = {
+    # --- Alignment / Mapping ---
+    "STAR": {"aliases": ["STAR aligner", "STARsolo", "STAR-Fusion"], "category": "Alignment", "url": "https://github.com/alexdobin/STAR"},
+    "Bowtie": {"aliases": ["Bowtie1", "bowtie 1"], "category": "Alignment", "url": "http://bowtie-bio.sourceforge.net"},
+    "Bowtie2": {"aliases": ["bowtie 2", "Bowtie 2"], "category": "Alignment", "url": "http://bowtie-bio.sourceforge.net/bowtie2"},
+    "BWA": {"aliases": ["bwa-mem", "BWA-MEM", "BWA-MEM2", "bwa mem"], "category": "Alignment", "url": "https://github.com/lh3/bwa"},
+    "HISAT2": {"aliases": ["HISAT", "hisat2"], "category": "Alignment", "url": "http://daehwankimlab.github.io/hisat2"},
+    "TopHat": {"aliases": ["TopHat2", "tophat2"], "category": "Alignment", "url": ""},
+    "minimap2": {"aliases": ["Minimap2"], "category": "Alignment", "url": "https://github.com/lh3/minimap2"},
+    "Novoalign": {"aliases": ["novoalign"], "category": "Alignment", "url": ""},
+    "GSNAP": {"aliases": ["gsnap"], "category": "Alignment", "url": ""},
+    "Salmon": {"aliases": ["salmon"], "category": "Quantification", "url": "https://combine-lab.github.io/salmon"},
+    "kallisto": {"aliases": ["Kallisto"], "category": "Quantification", "url": "https://pachterlab.github.io/kallisto"},
+    "RSEM": {"aliases": ["rsem"], "category": "Quantification", "url": "https://github.com/deweylab/RSEM"},
+    "featureCounts": {"aliases": ["Subread", "subread"], "category": "Quantification", "url": "http://subread.sourceforge.net"},
+    "HTSeq": {"aliases": ["htseq-count", "HTSeq-count"], "category": "Quantification", "url": "https://htseq.readthedocs.io"},
+    "Cufflinks": {"aliases": ["Cuffdiff", "Cuffquant", "Cuffcompare"], "category": "Quantification", "url": ""},
+    # --- Differential Expression ---
+    "DESeq2": {"aliases": ["DESeq", "DEseq2", "DESeq 2"], "category": "Differential Expression", "url": "https://bioconductor.org/packages/DESeq2"},
+    "edgeR": {"aliases": ["EdgeR"], "category": "Differential Expression", "url": "https://bioconductor.org/packages/edgeR"},
+    "limma": {"aliases": ["limma-voom", "limma voom", "voom"], "category": "Differential Expression", "url": "https://bioconductor.org/packages/limma"},
+    "StringTie": {"aliases": ["Stringtie", "stringtie"], "category": "Transcript Assembly", "url": "https://ccb.jhu.edu/software/stringtie"},
+    # --- CLIP / RBP Analysis ---
+    "CLIPper": {"aliases": ["clipper", "CLIPPER"], "category": "CLIP Analysis", "url": "https://github.com/YeoLab/clipper"},
+    "Skipper": {"aliases": ["skipper"], "category": "CLIP Analysis", "url": "https://github.com/YeoLab/skipper"},
+    "PureCLIP": {"aliases": ["pureclip", "PureClip"], "category": "CLIP Analysis", "url": "https://github.com/skrakau/PureCLIP"},
+    "Piranha": {"aliases": ["piranha"], "category": "CLIP Analysis", "url": ""},
+    "CLAM": {"aliases": ["clam"], "category": "CLIP Analysis", "url": ""},
+    "CTK": {"aliases": ["CIMS", "CITS"], "category": "CLIP Analysis", "url": ""},
+    "MANDALORION": {"aliases": ["Mandalorion"], "category": "CLIP Analysis", "url": ""},
+    "rMAPS": {"aliases": ["rMAPS2", "rmaps"], "category": "Splicing Analysis", "url": ""},
+    "MISO": {"aliases": ["miso"], "category": "Splicing Analysis", "url": ""},
+    "rMATS": {"aliases": ["rmats", "rMATS-turbo"], "category": "Splicing Analysis", "url": "https://github.com/Xinglab/rmats-turbo"},
+    "SUPPA": {"aliases": ["SUPPA2", "suppa"], "category": "Splicing Analysis", "url": ""},
+    "Leafcutter": {"aliases": ["leafcutter", "LeafCutter"], "category": "Splicing Analysis", "url": ""},
+    "MAJIQ": {"aliases": ["majiq"], "category": "Splicing Analysis", "url": ""},
+    "Whippet": {"aliases": ["whippet"], "category": "Splicing Analysis", "url": ""},
+    "SplAdder": {"aliases": ["spladder"], "category": "Splicing Analysis", "url": ""},
+    "RBNS": {"aliases": ["rbns"], "category": "RBP Binding", "url": ""},
+    "RBPmap": {"aliases": ["rbpmap"], "category": "RBP Binding", "url": ""},
+    # --- Peak Calling ---
+    "MACS2": {"aliases": ["MACS", "MACS 2", "macs2", "MACS3"], "category": "Peak Calling", "url": "https://github.com/macs3-project/MACS"},
+    "HOMER": {"aliases": ["Homer", "homer"], "category": "Peak Calling / Motif", "url": "http://homer.ucsd.edu"},
+    "IDR": {"aliases": ["idr", "irreproducible discovery rate"], "category": "Peak Calling", "url": ""},
+    # --- Single-Cell ---
+    "Cell Ranger": {"aliases": ["CellRanger", "cellranger", "Cell Ranger ARC", "cellranger-arc", "cellranger-atac"], "category": "Single-Cell", "url": "https://support.10xgenomics.com"},
+    "Seurat": {"aliases": ["seurat"], "category": "Single-Cell", "url": "https://satijalab.org/seurat"},
+    "Scanpy": {"aliases": ["scanpy", "scverse"], "category": "Single-Cell", "url": "https://scanpy.readthedocs.io"},
+    "scVI": {"aliases": ["scvi-tools", "scvi", "scANVI", "totalVI", "PeakVI", "MultiVI", "DestVI"], "category": "Single-Cell", "url": "https://scvi-tools.org"},
+    "Velocyto": {"aliases": ["velocyto", "scVelo", "scvelo", "RNA velocity"], "category": "Single-Cell", "url": "http://velocyto.org"},
+    "Monocle": {"aliases": ["monocle2", "Monocle3", "monocle3", "Monocle 3"], "category": "Single-Cell", "url": ""},
+    "Harmony": {"aliases": ["harmony"], "category": "Single-Cell", "url": ""},
+    "LIGER": {"aliases": ["liger", "rliger"], "category": "Single-Cell", "url": ""},
+    "ArchR": {"aliases": ["archr"], "category": "Single-Cell", "url": ""},
+    "Signac": {"aliases": ["signac"], "category": "Single-Cell", "url": ""},
+    "CellChat": {"aliases": ["cellchat"], "category": "Single-Cell", "url": ""},
+    "CellTypist": {"aliases": ["celltypist"], "category": "Single-Cell", "url": ""},
+    "scArches": {"aliases": ["scarches"], "category": "Single-Cell", "url": ""},
+    # --- QC / Preprocessing ---
+    "FastQC": {"aliases": ["fastqc"], "category": "QC", "url": "https://www.bioinformatics.babraham.ac.uk/projects/fastqc"},
+    "MultiQC": {"aliases": ["multiqc"], "category": "QC", "url": "https://multiqc.info"},
+    "Trimmomatic": {"aliases": ["trimmomatic"], "category": "Read Processing", "url": ""},
+    "cutadapt": {"aliases": ["Cutadapt", "CutAdapt"], "category": "Read Processing", "url": "https://cutadapt.readthedocs.io"},
+    "Trim Galore": {"aliases": ["TrimGalore", "trim_galore", "trim galore"], "category": "Read Processing", "url": ""},
+    "fastp": {"aliases": ["Fastp"], "category": "Read Processing", "url": "https://github.com/OpenGene/fastp"},
+    "UMI-tools": {"aliases": ["umi_tools", "UMI tools", "umi-tools"], "category": "Read Processing", "url": ""},
+    # --- Variant / Editing ---
+    "GATK": {"aliases": ["HaplotypeCaller", "Mutect2", "MuTect"], "category": "Variant Calling", "url": "https://gatk.broadinstitute.org"},
+    "SAILOR": {"aliases": ["sailor"], "category": "RNA Editing", "url": "https://github.com/YeoLab/sailor"},
+    "MARINE": {"aliases": ["marine"], "category": "RNA Editing", "url": ""},
+    "REDItools": {"aliases": ["reditools"], "category": "RNA Editing", "url": ""},
+    "JACUSA": {"aliases": ["jacusa", "JACUSA2"], "category": "RNA Editing", "url": ""},
+    # --- Genome / Sequence Tools ---
+    "samtools": {"aliases": ["SAMtools", "Samtools", "htslib"], "category": "Genomic Utilities", "url": "http://www.htslib.org"},
+    "bedtools": {"aliases": ["BEDTools", "Bedtools"], "category": "Genomic Utilities", "url": "https://bedtools.readthedocs.io"},
+    "Picard": {"aliases": ["picard"], "category": "Genomic Utilities", "url": "https://broadinstitute.github.io/picard"},
+    "deepTools": {"aliases": ["deeptools", "DeepTools"], "category": "Genomic Utilities", "url": "https://deeptools.readthedocs.io"},
+    "UCSC tools": {"aliases": ["UCSC Genome Browser", "liftOver", "bigWig", "bigBed", "bedGraphToBigWig", "wigToBigWig"], "category": "Genomic Utilities", "url": "https://genome.ucsc.edu"},
+    "IGV": {"aliases": ["Integrative Genomics Viewer"], "category": "Visualization", "url": "https://igv.org"},
+    # --- Motif Analysis ---
+    "MEME": {"aliases": ["MEME Suite", "MEME-ChIP", "meme-chip"], "category": "Motif Analysis", "url": "https://meme-suite.org"},
+    "DREME": {"aliases": ["dreme"], "category": "Motif Analysis", "url": "https://meme-suite.org"},
+    "FIMO": {"aliases": ["fimo"], "category": "Motif Analysis", "url": "https://meme-suite.org"},
+    "DeepBind": {"aliases": ["deepbind"], "category": "Motif Analysis", "url": ""},
+    # --- Pathway / Enrichment ---
+    "GSEA": {"aliases": ["Gene Set Enrichment Analysis", "gsea", "fgsea"], "category": "Pathway Analysis", "url": "https://www.gsea-msigdb.org"},
+    "DAVID": {"aliases": ["david"], "category": "Pathway Analysis", "url": "https://david.ncifcrf.gov"},
+    "Enrichr": {"aliases": ["enrichr"], "category": "Pathway Analysis", "url": "https://maayanlab.cloud/Enrichr"},
+    "clusterProfiler": {"aliases": ["ClusterProfiler", "clusterprofiler"], "category": "Pathway Analysis", "url": ""},
+    "Gene Ontology": {"aliases": ["GO analysis", "GO enrichment", "gene ontology"], "category": "Pathway Analysis", "url": "http://geneontology.org"},
+    "KEGG": {"aliases": ["kegg", "KEGG pathway"], "category": "Pathway Analysis", "url": "https://www.genome.jp/kegg"},
+    "Reactome": {"aliases": ["reactome"], "category": "Pathway Analysis", "url": "https://reactome.org"},
+    "Metascape": {"aliases": ["metascape"], "category": "Pathway Analysis", "url": "https://metascape.org"},
+    "PANTHER": {"aliases": ["panther"], "category": "Pathway Analysis", "url": "http://pantherdb.org"},
+    # --- Machine Learning / Deep Learning ---
+    "TensorFlow": {"aliases": ["tensorflow", "Tensorflow"], "category": "Machine Learning", "url": "https://www.tensorflow.org"},
+    "PyTorch": {"aliases": ["pytorch", "Pytorch"], "category": "Machine Learning", "url": "https://pytorch.org"},
+    "Keras": {"aliases": ["keras"], "category": "Machine Learning", "url": "https://keras.io"},
+    "scikit-learn": {"aliases": ["sklearn", "scikit learn", "Scikit-learn"], "category": "Machine Learning", "url": "https://scikit-learn.org"},
+    "XGBoost": {"aliases": ["xgboost"], "category": "Machine Learning", "url": ""},
+    "Random Forest": {"aliases": ["random forest", "RandomForest"], "category": "Machine Learning", "url": ""},
+    "SVM": {"aliases": ["support vector machine", "Support Vector Machine"], "category": "Machine Learning", "url": ""},
+    "Neural Network": {"aliases": ["neural network", "deep neural network", "DNN", "CNN", "convolutional neural network", "RNN", "recurrent neural network", "transformer", "LSTM"], "category": "Machine Learning", "url": ""},
+    "AlphaFold": {"aliases": ["alphafold", "AlphaFold2", "AlphaFold 2"], "category": "Structure Prediction", "url": "https://alphafold.ebi.ac.uk"},
+    "RoseTTAFold": {"aliases": ["rosettafold"], "category": "Structure Prediction", "url": ""},
+    # --- Statistical / Dimensionality ---
+    "PCA": {"aliases": ["principal component analysis", "Principal Component Analysis"], "category": "Statistics", "url": ""},
+    "t-SNE": {"aliases": ["tSNE", "t-distributed stochastic neighbor embedding"], "category": "Statistics", "url": ""},
+    "UMAP": {"aliases": ["umap"], "category": "Statistics", "url": "https://umap-learn.readthedocs.io"},
+    "Leiden clustering": {"aliases": ["Leiden", "leiden algorithm", "Leiden algorithm"], "category": "Statistics", "url": ""},
+    "Louvain clustering": {"aliases": ["Louvain", "louvain algorithm"], "category": "Statistics", "url": ""},
+    # --- Workflow / Pipeline ---
+    "Nextflow": {"aliases": ["nextflow", "nf-core"], "category": "Workflow", "url": "https://nextflow.io"},
+    "Snakemake": {"aliases": ["snakemake"], "category": "Workflow", "url": "https://snakemake.readthedocs.io"},
+    "WDL": {"aliases": ["Cromwell", "cromwell"], "category": "Workflow", "url": ""},
+    # --- Languages / Frameworks ---
+    "R": {"aliases": ["R language", "R/Bioconductor", "Bioconductor"], "category": "Language", "url": "https://www.r-project.org"},
+    "Python": {"aliases": ["python", "Python 3"], "category": "Language", "url": "https://python.org"},
+    "MATLAB": {"aliases": ["matlab", "Matlab"], "category": "Language", "url": ""},
+    # --- Databases / References ---
+    "GENCODE": {"aliases": ["gencode", "Gencode"], "category": "Reference", "url": "https://www.gencodegenes.org"},
+    "Ensembl": {"aliases": ["ensembl"], "category": "Reference", "url": "https://ensembl.org"},
+    "RefSeq": {"aliases": ["refseq", "NCBI RefSeq"], "category": "Reference", "url": ""},
+    "UniProt": {"aliases": ["uniprot", "UniProtKB", "Swiss-Prot"], "category": "Reference", "url": "https://www.uniprot.org"},
+    "BLAST": {"aliases": ["blast", "BLASTN", "BLASTP", "BLASTX", "BLASTn", "BLASTp"], "category": "Sequence Search", "url": "https://blast.ncbi.nlm.nih.gov"},
+    "HMMER": {"aliases": ["hmmer"], "category": "Sequence Search", "url": "http://hmmer.org"},
+    # --- Assembly ---
+    "Trinity": {"aliases": ["trinity"], "category": "Assembly", "url": "https://github.com/trinityrnaseq/trinityrnaseq"},
+    "SPAdes": {"aliases": ["spades"], "category": "Assembly", "url": "https://github.com/ablab/spades"},
+    "FLAIR": {"aliases": ["flair"], "category": "Long-Read Analysis", "url": "https://github.com/BrooksLabUCSC/flair"},
+    "IsoSeq": {"aliases": ["Iso-Seq", "iso-seq", "IsoSeq3"], "category": "Long-Read Analysis", "url": ""},
+    "TALON": {"aliases": ["talon"], "category": "Long-Read Analysis", "url": ""},
+    "Bambu": {"aliases": ["bambu"], "category": "Long-Read Analysis", "url": ""},
+    # --- Yeo Lab specific tools ---
+    "ENCODE pipeline": {"aliases": ["ENCODE RNA-seq pipeline", "ENCODE eCLIP pipeline", "ENCODE CLIP pipeline", "ENCODE processing pipeline"], "category": "Pipeline", "url": "https://www.encodeproject.org"},
+    "Mudskipper": {"aliases": ["mudskipper"], "category": "CLIP Analysis", "url": ""},
+    "Oligomap": {"aliases": ["oligomap"], "category": "Sequence Analysis", "url": ""},
+    "FLAM-seq": {"aliases": ["flam-seq", "FLAM-Seq"], "category": "Sequencing Method", "url": ""},
+}
+
+# Assay type patterns (detected from abstracts + GEO)
+_ASSAY_PATTERNS = {
+    "eCLIP": {"aliases": ["eCLIP-seq", "enhanced CLIP"], "category": "Assay"},
+    "iCLIP": {"aliases": ["iCLIP2", "individual-nucleotide resolution CLIP"], "category": "Assay"},
+    "CLIP-seq": {"aliases": ["CLIP sequencing", "UV crosslinking and immunoprecipitation"], "category": "Assay"},
+    "HITS-CLIP": {"aliases": ["HITS-CLIP"], "category": "Assay"},
+    "PAR-CLIP": {"aliases": ["PAR-CLIP"], "category": "Assay"},
+    "irCLIP": {"aliases": ["infrared CLIP"], "category": "Assay"},
+    "RNA-seq": {"aliases": ["RNA sequencing", "RNAseq", "mRNA-seq", "mRNA sequencing", "bulk RNA-seq"], "category": "Assay"},
+    "scRNA-seq": {"aliases": ["single-cell RNA-seq", "single cell RNA-seq", "10x Genomics", "Drop-seq", "Smart-seq", "Smart-seq2", "10X Chromium"], "category": "Assay"},
+    "snRNA-seq": {"aliases": ["single-nucleus RNA-seq", "single nucleus RNA-seq"], "category": "Assay"},
+    "ATAC-seq": {"aliases": ["ATAC sequencing", "ATACseq", "scATAC-seq", "single-cell ATAC-seq"], "category": "Assay"},
+    "ChIP-seq": {"aliases": ["ChIP sequencing", "ChIPseq", "CUT&RUN", "CUT&Tag"], "category": "Assay"},
+    "Ribo-seq": {"aliases": ["ribosome profiling", "Ribo-Seq", "ribosome footprinting"], "category": "Assay"},
+    "SHAPE-seq": {"aliases": ["SHAPE-MaP", "DMS-seq", "icSHAPE", "SHAPE sequencing"], "category": "Assay"},
+    "Nanopore sequencing": {"aliases": ["Oxford Nanopore", "ONT sequencing", "nanopore", "MinION", "PromethION"], "category": "Assay"},
+    "PacBio sequencing": {"aliases": ["PacBio", "SMRT sequencing", "Iso-Seq", "HiFi sequencing", "long-read sequencing"], "category": "Assay"},
+    "Multiome": {"aliases": ["multiome", "10x Multiome", "RNA+ATAC", "joint profiling"], "category": "Assay"},
+    "Spatial transcriptomics": {"aliases": ["spatial transcriptomics", "MERFISH", "Slide-seq", "Visium", "FISH"], "category": "Assay"},
+    "Hi-C": {"aliases": ["Hi-C", "BL-Hi-C", "HiC"], "category": "Assay"},
+    "Mass spectrometry": {"aliases": ["mass spectrometry", "LC-MS", "MS/MS", "proteomics", "TMT", "iTRAQ", "SILAC"], "category": "Assay"},
+    "Whole genome sequencing": {"aliases": ["WGS", "whole genome sequencing", "whole-genome sequencing"], "category": "Assay"},
+    "Whole exome sequencing": {"aliases": ["WES", "whole exome sequencing", "whole-exome sequencing", "exome sequencing"], "category": "Assay"},
+    "Microarray": {"aliases": ["microarray", "gene expression array", "splicing array", "Affymetrix", "Agilent"], "category": "Assay"},
+}
+
+# Merge assay patterns into the main dict
+for _name, _info in _ASSAY_PATTERNS.items():
+    _SOFTWARE_DICT[_name] = {**_info, "url": ""}
+
+_VERSION_RE = re.compile(
+    r'(?:v(?:ersion)?\s*)?(\d+\.\d+(?:\.\d+)?(?:[a-z])?)',
+    re.IGNORECASE
+)
+
+_SRA_STRATEGY_MAP = {
+    "RNA-Seq": "RNA-seq",
+    "CLIP-Seq": "CLIP-seq",
+    "ChIP-Seq": "ChIP-seq",
+    "ATAC-seq": "ATAC-seq",
+    "ATAC-Seq": "ATAC-seq",
+    "Bisulfite-Seq": "Bisulfite sequencing",
+    "Hi-C": "Hi-C",
+    "WGS": "Whole genome sequencing",
+    "WXS": "Whole exome sequencing",
+    "miRNA-Seq": "miRNA-seq",
+}
+
+_SRA_PLATFORM_MAP = {
+    "ILLUMINA": ("Illumina", "Sequencing Platform"),
+    "OXFORD_NANOPORE": ("Nanopore sequencing", "Assay"),
+    "PACBIO_SMRT": ("PacBio sequencing", "Assay"),
+    "ION_TORRENT": ("Ion Torrent", "Sequencing Platform"),
+}
+
+
+def _extract_methods_from_text(text, source_type="abstract"):
+    """Scan text for software/method mentions. Returns list of dicts."""
+    if not text:
+        return []
+
+    found = []
+    seen = set()
+
+    for canonical, info in _SOFTWARE_DICT.items():
+        all_names = [canonical] + info.get("aliases", [])
+
+        for alias in all_names:
+            if len(alias) <= 3 and alias.isupper():
+                pattern = r'\b' + re.escape(alias) + r'\b'
+                flags = 0
+            elif len(alias) <= 2:
+                if alias == "R":
+                    pattern = r'\bR\s*/\s*Bioconductor|\bR\s+\(|\bR\s+package|\bR\s+software|\bin R\b'
+                    flags = 0
+                else:
+                    continue
+            else:
+                pattern = r'\b' + re.escape(alias) + r'\b'
+                flags = re.IGNORECASE if len(alias) > 4 else 0
+
+            match = re.search(pattern, text, flags)
+            if match and canonical not in seen:
+                seen.add(canonical)
+
+                version = None
+                after_text = text[match.end():match.end() + 40]
+                ver_match = _VERSION_RE.search(after_text)
+                if ver_match and ver_match.start() < 15:
+                    version = ver_match.group(1)
+
+                found.append({
+                    "name": canonical,
+                    "version": version,
+                    "category": info.get("category", "Unknown"),
+                    "source_type": source_type,
+                    "matched_alias": alias if alias != canonical else None,
+                    "url": info.get("url", ""),
+                })
+                break
+
+    return found
+
+
+def _extract_from_keywords(keywords_str, mesh_str):
+    """Extract method hints from keywords and MeSH terms."""
+    try:
+        kw_list = json.loads(keywords_str) if keywords_str else []
+    except (json.JSONDecodeError, TypeError):
+        kw_list = [k.strip() for k in (keywords_str or "").split(";") if k.strip()]
+
+    try:
+        mesh_list = json.loads(mesh_str) if mesh_str else []
+    except (json.JSONDecodeError, TypeError):
+        mesh_list = [m.strip() for m in (mesh_str or "").split(";") if m.strip()]
+
+    all_terms = " ".join(kw_list + mesh_list)
+    return _extract_methods_from_text(all_terms, source_type="keywords_mesh")
+
+
+def _extract_from_sra(library_strategy, platform, instrument):
+    """Extract assay/platform info from SRA metadata."""
+    found = []
+
+    if library_strategy and library_strategy in _SRA_STRATEGY_MAP and _SRA_STRATEGY_MAP[library_strategy]:
+        found.append({
+            "name": _SRA_STRATEGY_MAP[library_strategy],
+            "version": None,
+            "category": "Assay",
+            "source_type": "sra_metadata",
+            "matched_alias": library_strategy,
+            "url": "",
+        })
+
+    if platform and platform in _SRA_PLATFORM_MAP:
+        name, cat = _SRA_PLATFORM_MAP[platform]
+        found.append({
+            "name": name,
+            "version": None,
+            "category": cat,
+            "source_type": "sra_metadata",
+            "matched_alias": platform,
+            "url": "",
+        })
+
+    return found
+
+
+def _ensure_methods_tables():
+    """Create computational_methods and publication_methods tables if they don't exist."""
+    with connection.cursor() as cur:
+        if _is_postgres():
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS computational_methods (
+                    method_id SERIAL PRIMARY KEY,
+                    canonical_name TEXT NOT NULL UNIQUE,
+                    category TEXT NOT NULL,
+                    url TEXT,
+                    description TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS publication_methods (
+                    id SERIAL PRIMARY KEY,
+                    pmid TEXT NOT NULL REFERENCES publications(pmid),
+                    method_id INTEGER NOT NULL REFERENCES computational_methods(method_id),
+                    version TEXT,
+                    source_type TEXT NOT NULL,
+                    matched_text TEXT,
+                    UNIQUE(pmid, method_id, source_type)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pub_methods_pmid ON publication_methods(pmid)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pub_methods_method ON publication_methods(method_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_methods_category ON computational_methods(category)")
+        else:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS computational_methods (
+                    method_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    canonical_name TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    url TEXT,
+                    description TEXT,
+                    UNIQUE(canonical_name)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS publication_methods (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pmid TEXT NOT NULL REFERENCES publications(pmid),
+                    method_id INTEGER NOT NULL REFERENCES computational_methods(method_id),
+                    version TEXT,
+                    source_type TEXT NOT NULL,
+                    matched_text TEXT,
+                    UNIQUE(pmid, method_id, source_type)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pub_methods_pmid ON publication_methods(pmid)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pub_methods_method ON publication_methods(method_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_methods_category ON computational_methods(category)")
+
+
+def start_methods_update():
+    """
+    Start a background methods extraction update.
+    Returns True if started, False if already running.
+    No external dependencies required — works from existing DB data.
+    """
+    with _status_lock:
+        if _update_status["running"]:
+            return False
+        _update_status.update({
+            "running": True,
+            "progress": "Starting methods extraction...",
+            "log": [],
+            "started_at": datetime.now().isoformat(),
+            "finished_at": None,
+            "error": None,
+            "stats": {},
+        })
+
+    t = threading.Thread(target=_run_methods_update, daemon=True)
+    t.start()
+    return True
+
+
+def _run_methods_update():
+    """Background worker for methods extraction."""
+    try:
+        _log("Starting computational methods extraction...")
+
+        # Ensure tables exist
+        _log("Ensuring computational_methods and publication_methods tables exist...")
+        _ensure_methods_tables()
+
+        # Clear existing data for a clean re-extraction
+        with connection.cursor() as cur:
+            cur.execute("DELETE FROM publication_methods")
+            cur.execute("DELETE FROM computational_methods")
+        _log("Cleared existing methods data for fresh extraction")
+
+        all_methods = defaultdict(list)  # pmid -> [method_dicts]
+
+        # Step 1: Extract from abstracts + keywords/MeSH
+        _log("[1/4] Extracting methods from publication abstracts and keywords...")
+        with connection.cursor() as cur:
+            cur.execute("SELECT pmid, abstract, keywords, mesh_terms FROM publications")
+            pubs = cur.fetchall()
+
+        for pmid, abstract, keywords, mesh_terms in pubs:
+            methods = _extract_methods_from_text(abstract, "abstract")
+            all_methods[pmid].extend(methods)
+
+            kw_methods = _extract_from_keywords(keywords, mesh_terms)
+            all_methods[pmid].extend(kw_methods)
+
+        abstract_count = sum(len(v) for v in all_methods.values())
+        pubs_with = len([k for k, v in all_methods.items() if v])
+        _log(f"  Found {abstract_count} method mentions across {pubs_with} publications")
+
+        # Step 2: Extract from GEO dataset metadata
+        _log("[2/4] Extracting methods from GEO dataset metadata...")
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT da.accession_id, da.accession, da.title, da.summary,
+                       da.overall_design, pd.pmid
+                FROM dataset_accessions da
+                JOIN publication_datasets pd ON pd.accession_id = da.accession_id
+                WHERE da.accession_type = 'GSE'
+                  AND (da.summary IS NOT NULL OR da.overall_design IS NOT NULL)
+            """)
+            geo_rows = cur.fetchall()
+
+        geo_count = 0
+        for acc_id, accession, title, summary, design, pmid in geo_rows:
+            text = " ".join(filter(None, [title, summary, design]))
+            methods = _extract_methods_from_text(text, "geo_metadata")
+            for m in methods:
+                m["matched_alias"] = m.get("matched_alias") or accession
+            all_methods[pmid].extend(methods)
+            geo_count += len(methods)
+
+        _log(f"  Found {geo_count} method mentions from {len(geo_rows)} GEO datasets")
+
+        # Step 3: Extract from SRA experiment metadata
+        _log("[3/4] Extracting methods from SRA experiment metadata...")
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT se.experiment_id, se.srx_accession, se.library_strategy,
+                       se.library_source, se.platform, se.instrument_model,
+                       se.source_gse, da.accession, pd.pmid
+                FROM sra_experiments se
+                LEFT JOIN dataset_accessions da ON se.parent_accession_id = da.accession_id
+                LEFT JOIN publication_datasets pd ON pd.accession_id = da.accession_id
+                WHERE pd.pmid IS NOT NULL
+            """)
+            sra_rows = cur.fetchall()
+
+        sra_count = 0
+        seen_pmid_sra = set()
+        for row in sra_rows:
+            exp_id, srx, strategy, source, platform, instrument, gse, accession, pmid = row
+            if (pmid, strategy, platform) in seen_pmid_sra:
+                continue
+            seen_pmid_sra.add((pmid, strategy, platform))
+
+            methods = _extract_from_sra(strategy, platform, instrument)
+            all_methods[pmid].extend(methods)
+            sra_count += len(methods)
+
+        _log(f"  Found {sra_count} method mentions from {len(sra_rows)} SRA experiments")
+
+        # Step 4: Deduplicate and insert
+        _log("[4/4] Deduplicating and inserting into database...")
+
+        # Insert all unique methods
+        all_canonical = {}
+        for pmid, methods in all_methods.items():
+            for m in methods:
+                name = m["name"]
+                if name not in all_canonical:
+                    all_canonical[name] = {
+                        "category": m["category"],
+                        "url": m.get("url", ""),
+                    }
+
+        with connection.cursor() as cur:
+            for name, info in all_canonical.items():
+                cur.execute(
+                    """INSERT INTO computational_methods (canonical_name, category, url)
+                       VALUES (%s, %s, %s)
+                       ON CONFLICT (canonical_name) DO NOTHING""",
+                    [name, info["category"], info.get("url", "")],
+                )
+
+        _log(f"  Inserted {len(all_canonical)} unique methods/tools")
+
+        # Build name->id map
+        method_ids = {}
+        with connection.cursor() as cur:
+            cur.execute("SELECT method_id, canonical_name FROM computational_methods")
+            for row in cur.fetchall():
+                method_ids[row[1]] = row[0]
+
+        # Insert publication_methods (deduplicated)
+        inserted = 0
+        with connection.cursor() as cur:
+            for pmid, methods in all_methods.items():
+                seen = set()
+                for m in methods:
+                    key = (pmid, m["name"], m["source_type"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    mid = method_ids.get(m["name"])
+                    if mid:
+                        try:
+                            cur.execute(
+                                """INSERT INTO publication_methods
+                                   (pmid, method_id, version, source_type, matched_text)
+                                   VALUES (%s, %s, %s, %s, %s)
+                                   ON CONFLICT (pmid, method_id, source_type) DO NOTHING""",
+                                [pmid, mid, m.get("version"),
+                                 m["source_type"],
+                                 m.get("matched_alias") or m.get("geo_accession")],
+                            )
+                            inserted += 1
+                        except Exception:
+                            pass
+
+        _log(f"  Inserted {inserted} publication-method links")
+
+        # Collect final stats
+        with connection.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM computational_methods")
+            total_methods = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM publication_methods")
+            total_links = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(DISTINCT pmid) FROM publication_methods")
+            pubs_with_methods = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM publications")
+            total_pubs = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(DISTINCT version) FROM publication_methods WHERE version IS NOT NULL")
+            version_count = cur.fetchone()[0]
+
+            stats = {
+                "methods": total_methods,
+                "method_links": total_links,
+                "pubs_with_methods": pubs_with_methods,
+                "total_publications": total_pubs,
+                "versions_found": version_count,
+            }
+
+        _set_status(stats=stats)
+        coverage_pct = round(100 * pubs_with_methods / total_pubs) if total_pubs else 0
+        _log(f"Methods extraction complete! {total_methods} methods, {total_links} links, "
+             f"{pubs_with_methods}/{total_pubs} publications ({coverage_pct}% coverage)")
+
+        # Log the update
+        with connection.cursor() as cur:
+            cur.execute(
+                """INSERT INTO update_log (new_pmids_added, notes)
+                   VALUES (%s, %s)""",
+                [0, f"Methods extraction: {total_methods} methods, {total_links} links, "
+                    f"{pubs_with_methods} publications"],
+            )
+
+    except Exception as e:
+        _log(f"ERROR (methods): {e}")
+        _set_status(error=str(e))
+    finally:
+        _set_status(running=False, finished_at=datetime.now().isoformat())
+
+
+# ============================================================
+# Analysis Pipeline Extraction
+# ============================================================
+
+# Metadata-only lines in GEO Data Processing (not actual analysis steps)
+_GEO_DP_METADATA_PREFIXES = [
+    "genome_build:",
+    "genome build:",
+    "supplementary_files_format_and_content:",
+    "supplementary files format and content:",
+    "assembly:",
+]
+
+
+def _ensure_pipeline_tables():
+    """Create analysis_pipelines and pipeline_steps tables if they don't exist."""
+    with connection.cursor() as cur:
+        if _is_postgres():
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS analysis_pipelines (
+                    pipeline_id SERIAL PRIMARY KEY,
+                    pmid TEXT NOT NULL REFERENCES publications(pmid) ON DELETE CASCADE,
+                    accession_id INTEGER REFERENCES dataset_accessions(accession_id) ON DELETE SET NULL,
+                    assay_type TEXT,
+                    pipeline_title TEXT,
+                    source TEXT NOT NULL,
+                    raw_text TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pipeline_steps (
+                    step_id SERIAL PRIMARY KEY,
+                    pipeline_id INTEGER NOT NULL REFERENCES analysis_pipelines(pipeline_id) ON DELETE CASCADE,
+                    step_order INTEGER NOT NULL,
+                    description TEXT NOT NULL,
+                    method_id INTEGER REFERENCES computational_methods(method_id) ON DELETE SET NULL,
+                    tool_name TEXT,
+                    tool_version TEXT,
+                    parameters TEXT,
+                    UNIQUE(pipeline_id, step_order)
+                )
+            """)
+        else:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS analysis_pipelines (
+                    pipeline_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pmid TEXT NOT NULL REFERENCES publications(pmid) ON DELETE CASCADE,
+                    accession_id INTEGER REFERENCES dataset_accessions(accession_id) ON DELETE SET NULL,
+                    assay_type TEXT,
+                    pipeline_title TEXT,
+                    source TEXT NOT NULL,
+                    raw_text TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pipeline_steps (
+                    step_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pipeline_id INTEGER NOT NULL REFERENCES analysis_pipelines(pipeline_id) ON DELETE CASCADE,
+                    step_order INTEGER NOT NULL,
+                    description TEXT NOT NULL,
+                    method_id INTEGER REFERENCES computational_methods(method_id) ON DELETE SET NULL,
+                    tool_name TEXT,
+                    tool_version TEXT,
+                    parameters TEXT,
+                    UNIQUE(pipeline_id, step_order)
+                )
+            """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pipelines_pmid ON analysis_pipelines(pmid)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pipelines_accession ON analysis_pipelines(accession_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pipelines_assay ON analysis_pipelines(assay_type)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_steps_pipeline ON pipeline_steps(pipeline_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_steps_method ON pipeline_steps(method_id)")
+
+        # --- Add code_example columns (idempotent for existing tables) ---
+        for col, typ in [("code_example", "TEXT"), ("code_language", "TEXT"), ("github_url", "TEXT")]:
+            try:
+                cur.execute(f"ALTER TABLE pipeline_steps ADD COLUMN {col} {typ}")
+            except Exception:
+                pass  # Column already exists
+
+
+def _classify_assay_from_text(text):
+    """Detect assay type from text using _ASSAY_PATTERNS."""
+    if not text:
+        return None
+    for assay_name, info in _ASSAY_PATTERNS.items():
+        all_names = [assay_name] + info.get("aliases", [])
+        for alias in all_names:
+            if len(alias) <= 3:
+                pattern = r'\b' + re.escape(alias) + r'\b'
+            else:
+                pattern = r'\b' + re.escape(alias) + r'\b'
+            if re.search(pattern, text, re.IGNORECASE if len(alias) > 3 else 0):
+                return assay_name
+    return None
+
+
+def _detect_tool_in_step(step_text, method_ids):
+    """Detect a single software/method mention in a pipeline step.
+    Returns (name, version, method_id) or (None, None, None)."""
+    methods = _extract_methods_from_text(step_text, source_type="pipeline")
+    # Filter out assay types and languages — we want actual tools
+    skip_cats = {"Assay", "Language", "Reference", "Statistics", "Sequencing Platform"}
+    for m in methods:
+        if m["category"] not in skip_cats:
+            mid = method_ids.get(m["name"])
+            return m["name"], m.get("version"), mid
+    # Fall back to assay/any match
+    for m in methods:
+        mid = method_ids.get(m["name"])
+        return m["name"], m.get("version"), mid
+    return None, None, None
+
+
+def _parse_geo_data_processing(lines):
+    """Parse GEO !Sample_data_processing lines into ordered step dicts.
+    Returns list of {step_order, description}."""
+    def _split_line_into_sentences(text):
+        """Split a line into sentence-like steps while preserving URLs."""
+        if not text:
+            return []
+        # Normalize whitespace first
+        normalized = re.sub(r"\s+", " ", text.strip())
+        if not normalized:
+            return []
+        # Split on sentence terminators followed by whitespace + capital/number.
+        # Keeps common method text intact while breaking multi-sentence lines.
+        parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", normalized)
+        sentences = []
+        for part in parts:
+            sent = part.strip(" ;")
+            if sent:
+                sentences.append(sent)
+        return sentences
+
+    steps = []
+    order = 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        is_meta = any(line.lower().startswith(prefix) for prefix in _GEO_DP_METADATA_PREFIXES)
+        if is_meta:
+            continue
+        for sentence in _split_line_into_sentences(line):
+            order += 1
+            steps.append({"step_order": order, "description": sentence})
+    return steps
+
+
+def _write_geo_steps_to_code_examples(accession, raw_text, steps, method_ids):
+    """
+    Create/overwrite the dataset JSON in code_examples/ for a GEO accession.
+    One pipeline step is written per sentence-level step.
+    """
+    try:
+        from publications.code_examples import (
+            save_dataset_content,
+            lookup_pub_date,
+            is_dataset_locked,
+            get_registry,
+        )
+    except Exception as e:
+        _log(f"  Warning: could not import code_examples helpers for {accession}: {e}")
+        return
+    registry = get_registry() or {}
+    existing = registry.get(accession, {}) if isinstance(registry, dict) else {}
+    existing_locked = bool(existing.get("locked", True))
+    has_prior_extract = (
+        str(existing.get("raw_text_source", "")).strip() == "geo_data_processing"
+        and bool(str(existing.get("raw_text", "")).strip())
+    )
+
+    # First run for an accession should sync JSON to extracted processing steps
+    # even if default lock=true was inferred for legacy files.
+    if has_prior_extract and is_dataset_locked(accession):
+        _log(f"  Skipping code_examples overwrite for {accession} (locked=true)")
+        return
+
+    json_steps = []
+    for step in steps:
+        desc = step.get("description", "").strip()
+        if not desc:
+            continue
+        tool_name, tool_version, _ = _detect_tool_in_step(desc, method_ids)
+        json_steps.append({
+            "step_order": len(json_steps) + 1,
+            "description": desc,
+            "tool_name": tool_name or "",
+            "tool_version": tool_version or "",
+            "code_example": "",
+            "code_language": "bash",
+            "github_url": "",
+        })
+
+    payload = {
+        "steps": json_steps,
+        "raw_text": raw_text,
+        "raw_text_source": "geo_data_processing",
+        # Keep existing lock setting if present; otherwise default locked=true.
+        "locked": existing_locked if existing else True,
+    }
+    content = json.dumps(payload, indent=2)
+
+    # Save in the existing location if present; otherwise use publication year/month.
+    year, month = lookup_pub_date(accession)
+    kwargs = {}
+    if year and month:
+        kwargs = {"year": int(year), "month": int(month)}
+
+    save_path = save_dataset_content(accession, content, **kwargs)
+    _log(f"  Updated code_examples JSON for {accession}: {save_path}")
+
+
+def _parse_methods_text_into_pipelines(text, section_title=None):
+    """Parse a Methods section text into sub-pipelines by heading.
+    Returns list of {title, assay_type, steps: [{step_order, description}]}."""
+    pipelines = []
+
+    # Try splitting by sub-headings (common in STAR Methods)
+    heading_pattern = re.compile(
+        r'\n\s*([A-Z][A-Za-z0-9 /\-()]+(?:analysis|processing|sequencing|quantification|'
+        r'alignment|mapping|calling|profiling|detection|annotation|identification|assembly|'
+        r'clustering|normalization|filtering|visualization|statistics|quality control|QC))\s*\n',
+        re.IGNORECASE
+    )
+
+    parts = heading_pattern.split(text)
+
+    if len(parts) > 1:
+        for i in range(1, len(parts), 2):
+            heading = parts[i].strip()
+            content = parts[i + 1].strip() if i + 1 < len(parts) else ""
+            if not content or len(content) < 30:
+                continue
+            assay = _classify_assay_from_text(heading + " " + content[:200])
+            steps = _split_text_into_steps(content)
+            if steps:
+                pipelines.append({"title": heading, "assay_type": assay, "steps": steps})
+    else:
+        title = section_title or "Computational analysis"
+        assay = _classify_assay_from_text(text[:500])
+        steps = _split_text_into_steps(text)
+        if steps:
+            pipelines.append({"title": title, "assay_type": assay, "steps": steps})
+
+    return pipelines
+
+
+def _split_text_into_steps(text):
+    """Split a methods text block into ordered steps, grouping by tool context."""
+    sentences = re.split(r'(?<=\.)\s+(?=[A-Z])', text.strip())
+    sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 15]
+
+    if not sentences:
+        return []
+
+    steps = []
+    current_step = []
+    current_tool = None
+
+    for sent in sentences:
+        methods = _extract_methods_from_text(sent, "pipeline")
+        tools = [m["name"] for m in methods if m["category"] not in {"Assay", "Language", "Reference", "Statistics"}]
+        primary_tool = tools[0] if tools else None
+
+        if not current_step:
+            current_step = [sent]
+            current_tool = primary_tool
+        elif primary_tool and primary_tool != current_tool:
+            steps.append(" ".join(current_step))
+            current_step = [sent]
+            current_tool = primary_tool
+        else:
+            current_step.append(sent)
+            if len(current_step) >= 3:
+                steps.append(" ".join(current_step))
+                current_step = []
+                current_tool = None
+
+    if current_step:
+        steps.append(" ".join(current_step))
+
+    return [{"step_order": i + 1, "description": s} for i, s in enumerate(steps)]
+
+
+def _extract_methods_section(full_text):
+    """Extract computational Methods sections from PMC full text.
+    Returns list of (section_title, section_text) tuples."""
+    sections = []
+
+    patterns = [
+        (r'QUANTIFICATION AND STATISTICAL ANALYSIS\s*\n([\s\S]*?)(?=\n[A-Z]{2,}[A-Z\s]*\n|DATA AND CODE|KEY RESOURCES|$)', "Quantification and Statistical Analysis"),
+        (r'METHOD DETAILS\s*\n([\s\S]*?)(?=\nQUANTIFICATION|$)', "Method Details"),
+        (r'(?:Materials and |Experimental )?Methods?\s*\n([\s\S]*?)(?=\n(?:Results|Discussion|Acknowledgement|References|Supplementary|Author Contributions|Data Availability|Funding)\b)', "Methods"),
+    ]
+
+    for pat, default_title in patterns:
+        for m in re.finditer(pat, full_text, re.IGNORECASE):
+            text = m.group(1).strip()
+            if len(text) > 100:
+                sections.append((default_title, text))
+
+    if not sections:
+        star_match = re.search(
+            r'STAR\s+METHODS\s*\n([\s\S]*?)(?=\nSUPPLEMENTAL|$)',
+            full_text, re.IGNORECASE
+        )
+        if star_match:
+            text = star_match.group(1).strip()
+            comp_start = re.search(
+                r'(?:RNA-seq|eCLIP|ChIP-seq|ATAC-seq|scRNA|Bioinformatic|Computational|Data |Sequencing)',
+                text, re.IGNORECASE
+            )
+            if comp_start:
+                text = text[comp_start.start():]
+                if len(text) > 100:
+                    sections.append(("STAR Methods — Computational", text))
+
+    return sections
+
+
+def _get_method_ids():
+    """Build name->method_id map from computational_methods table."""
+    method_ids = {}
+    with connection.cursor() as cur:
+        cur.execute("SELECT method_id, canonical_name FROM computational_methods")
+        for row in cur.fetchall():
+            method_ids[row[1]] = row[0]
+    return method_ids
+
+
+def _insert_pipeline(cur, pmid, accession_id, assay_type, title, source, raw_text, steps, method_ids, accession_str=None):
+    """Insert a pipeline and its steps. Returns pipeline_id or None.
+
+    Parameters
+    ----------
+    accession_str : str or None
+        The dataset accession string (e.g. "GSE137810") used to look up
+        curated code examples from tools.json.  If None, code examples
+        are populated from tools.json by matching accession_id → accession.
+    """
+    if not steps:
+        return None
+
+    cur.execute(
+        """INSERT INTO analysis_pipelines (pmid, accession_id, assay_type, pipeline_title, source, raw_text)
+           VALUES (%s, %s, %s, %s, %s, %s)""",
+        [pmid, accession_id, assay_type, title, source, raw_text],
+    )
+    if _is_postgres():
+        cur.execute("SELECT currval(pg_get_serial_sequence('analysis_pipelines', 'pipeline_id'))")
+    else:
+        cur.execute("SELECT last_insert_rowid()")
+    pipeline_id = cur.fetchone()[0]
+
+    # Lazy import to avoid circular dependency
+    from publications.code_examples import get_code_example, get_code_example_by_tool
+
+    # Resolve accession string from DB if not provided
+    if not accession_str and accession_id:
+        cur.execute("SELECT accession FROM dataset_accessions WHERE accession_id = %s", [accession_id])
+        row = cur.fetchone()
+        if row:
+            accession_str = row[0]
+
+    for step in steps:
+        tool_name, tool_version, method_id = _detect_tool_in_step(step["description"], method_ids)
+
+        # Look up code example from the dataset-keyed registry
+        code_example = None
+        code_language = None
+        github_url = None
+
+        if accession_str:
+            # Try by step_order first, then by tool_name
+            code_example, code_language, github_url = get_code_example(
+                accession_str, step["step_order"],
+            )
+            if not code_example and tool_name:
+                code_example, code_language, github_url = get_code_example_by_tool(
+                    accession_str, tool_name,
+                )
+
+        cur.execute(
+            """INSERT INTO pipeline_steps
+               (pipeline_id, step_order, description, method_id, tool_name, tool_version,
+                code_example, code_language, github_url)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT DO NOTHING""",
+            [pipeline_id, step["step_order"], step["description"], method_id,
+             tool_name, tool_version, code_example, code_language, github_url],
+        )
+
+    return pipeline_id
+
+
+# ============================================================
+# GEO Data Processing Fetcher
+# ============================================================
+
+def _fetch_gsm_data_processing_lines(gsm_accession, rate):
+    """Fetch a single GSM's SOFT record and extract !Sample_data_processing lines."""
+    url = f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={gsm_accession}&targ=self&form=text&view=quick"
+    try:
+        resp = _requests.get(url, timeout=30)
+        resp.raise_for_status()
+        lines = []
+        for line in resp.text.split("\n"):
+            line = line.strip()
+            if line.startswith("!Sample_data_processing"):
+                val = "=".join(line.split("=")[1:]).strip() if "=" in line else ""
+                if val:
+                    lines.append(val)
+        _rate_limit(rate)
+        return lines
+    except Exception as e:
+        _log(f"  Warning: failed to fetch {gsm_accession}: {e}")
+        _rate_limit(rate)
+        return []
+
+
+def _run_geo_pipeline_extraction(method_ids):
+    """Phase 1: Extract pipelines from GEO Data Processing sections."""
+    _log("[1/2] Extracting pipelines from GEO Data Processing sections...")
+
+    if not _HAS_REQUESTS:
+        _log("  Skipping GEO — requests library not available")
+        return 0
+
+    rate = _setup_entrez() if _HAS_BIOPYTHON else 0.5
+
+    with connection.cursor() as cur:
+        cur.execute("""
+            SELECT da.accession_id, da.accession, da.sample_ids, pd.pmid,
+                   da.title, da.overall_design
+            FROM dataset_accessions da
+            JOIN publication_datasets pd ON pd.accession_id = da.accession_id
+            WHERE da.accession_type = 'GSE'
+              AND da.sample_ids IS NOT NULL
+              AND da.sample_ids != ''
+              AND da.sample_ids != '[]'
+        """)
+        gse_rows = cur.fetchall()
+
+    _log(f"  Found {len(gse_rows)} GSE datasets linked to publications")
+    pipeline_count = 0
+    step_count = 0
+
+    for idx, (acc_id, accession, sample_ids_raw, pmid, title, design) in enumerate(gse_rows):
+        if (idx + 1) % 10 == 0:
+            _log(f"  Processing {idx + 1}/{len(gse_rows)} GSEs...")
+
+        try:
+            samples = json.loads(sample_ids_raw) if sample_ids_raw.startswith("[") else [s.strip() for s in sample_ids_raw.split(",")]
+        except (json.JSONDecodeError, TypeError):
+            samples = [s.strip() for s in sample_ids_raw.split(",")]
+
+        if not samples:
+            continue
+
+        gsm = samples[0].strip()
+        if not gsm.startswith("GSM"):
+            continue
+
+        dp_lines = _fetch_gsm_data_processing_lines(gsm, rate)
+        if not dp_lines:
+            continue
+
+        steps = _parse_geo_data_processing(dp_lines)
+        if not steps:
+            continue
+
+        context_text = " ".join(filter(None, [title, design])) + " " + " ".join(dp_lines)
+        assay = _classify_assay_from_text(context_text)
+
+        ptitle = f"{accession} Data Processing"
+        if assay:
+            ptitle = f"{accession} {assay} Data Processing"
+
+        raw_text = "\n".join(dp_lines)
+
+        with connection.cursor() as cur:
+            pid = _insert_pipeline(
+                cur, pmid, acc_id, assay, ptitle,
+                "geo_data_processing", raw_text, steps, method_ids,
+                accession_str=accession,
+            )
+            if pid:
+                pipeline_count += 1
+                step_count += len(steps)
+
+        # Save/overwrite dataset JSON in code_examples/ from sentence-level GEO steps
+        try:
+            _write_geo_steps_to_code_examples(accession, raw_text, steps, method_ids)
+        except Exception as e:
+            _log(f"  Warning: failed writing code_examples JSON for {accession}: {e}")
+
+    _log(f"  Created {pipeline_count} pipelines with {step_count} steps from GEO Data Processing")
+    return pipeline_count
+
+
+# ============================================================
+# PMC Methods Extraction
+# ============================================================
+
+def _run_pmc_pipeline_extraction(method_ids):
+    """Phase 2: Extract pipelines from PMC full-text Methods sections."""
+    _log("[2/2] Extracting pipelines from PMC Methods sections...")
+
+    if not _HAS_BIOPYTHON:
+        _log("  Skipping PMC — biopython not available")
+        return 0
+
+    rate = _setup_entrez()
+
+    with connection.cursor() as cur:
+        cur.execute("""
+            SELECT pmid, pmc_id FROM publications
+            WHERE pmc_id IS NOT NULL AND pmc_id != ''
+        """)
+        pmc_pubs = cur.fetchall()
+
+    _log(f"  Found {len(pmc_pubs)} publications with PMC IDs")
+    pipeline_count = 0
+    step_count = 0
+    errors = 0
+
+    for idx, (pmid, pmc_id) in enumerate(pmc_pubs):
+        if (idx + 1) % 10 == 0:
+            _log(f"  Processing {idx + 1}/{len(pmc_pubs)} PMC articles...")
+
+        pmc_num = pmc_id.replace("PMC", "").strip()
+
+        try:
+            handle = Entrez.efetch(db="pmc", id=pmc_num, rettype="xml")
+            xml_text = handle.read()
+            handle.close()
+            _rate_limit(rate)
+
+            full_text = _extract_text_from_pmc_xml(xml_text)
+            if not full_text or len(full_text) < 200:
+                continue
+
+            method_sections = _extract_methods_section(full_text)
+            if not method_sections:
+                continue
+
+            # Look up GSE accessions for this PMID (for raw_text saving)
+            pmid_accessions = []
+            try:
+                with connection.cursor() as cur:
+                    cur.execute("""
+                        SELECT da.accession FROM dataset_accessions da
+                        JOIN publication_datasets pd ON da.accession_id = pd.accession_id
+                        WHERE pd.pmid = %s AND da.accession_type = 'GSE'
+                    """, [pmid])
+                    pmid_accessions = [r[0] for r in cur.fetchall()]
+            except Exception:
+                pass
+
+            combined_raw = "\n\n".join(
+                f"[{st}]\n{stxt}" for st, stxt in method_sections
+            )
+
+            for section_title, section_text in method_sections:
+                pipelines = _parse_methods_text_into_pipelines(section_text, section_title)
+
+                for p in pipelines:
+                    if not p["steps"]:
+                        continue
+                    raw = "\n".join(s["description"] for s in p["steps"])
+                    with connection.cursor() as cur:
+                        pid = _insert_pipeline(
+                            cur, pmid, None, p.get("assay_type"),
+                            p["title"], "pmc_methods", raw,
+                            p["steps"], method_ids,
+                        )
+                        if pid:
+                            pipeline_count += 1
+                            step_count += len(p["steps"])
+
+            # Save raw methods text into JSON files for linked GSE accessions
+            if pmid_accessions and combined_raw:
+                try:
+                    from publications.code_examples import update_dataset_raw_text
+                    for acc in pmid_accessions:
+                        update_dataset_raw_text(acc, combined_raw, source="pmc_methods")
+                except Exception:
+                    pass
+
+        except Exception as e:
+            errors += 1
+            if errors <= 5:
+                _log(f"  Warning: failed to process PMC{pmc_num}: {e}")
+            _rate_limit(rate)
+            continue
+
+    _log(f"  Created {pipeline_count} pipelines with {step_count} steps from PMC Methods")
+    if errors > 5:
+        _log(f"  ({errors} total errors during PMC extraction)")
+    return pipeline_count
+
+
+def _extract_text_from_pmc_xml(xml_bytes):
+    """Extract plain text from PMC XML (JATS format)."""
+    try:
+        if isinstance(xml_bytes, bytes):
+            xml_text = xml_bytes.decode("utf-8", errors="replace")
+        else:
+            xml_text = xml_bytes
+
+        root = ET.fromstring(xml_text)
+        body = root.find(".//body")
+        if body is None:
+            return ""
+
+        parts = []
+        for elem in body.iter():
+            if elem.text:
+                parts.append(elem.text)
+            if elem.tail:
+                parts.append(elem.tail)
+
+        return " ".join(parts)
+    except ET.ParseError:
+        return ""
+
+
+def import_pmc_methods_json(json_path):
+    """Import pipeline data from a JSON file (produced by extract_pmc_methods.py).
+    JSON format: [{pmid, pmc_id, sections: [{title, text}]}, ...]"""
+    with open(json_path) as f:
+        data = json.load(f)
+
+    method_ids = _get_method_ids()
+    pipeline_count = 0
+
+    for entry in data:
+        pmid = entry.get("pmid")
+        if not pmid:
+            continue
+
+        for section in entry.get("sections", []):
+            title = section.get("title", "Methods")
+            text = section.get("text", "")
+            if len(text) < 50:
+                continue
+
+            pipelines = _parse_methods_text_into_pipelines(text, title)
+            for p in pipelines:
+                if not p["steps"]:
+                    continue
+                raw = "\n".join(s["description"] for s in p["steps"])
+                with connection.cursor() as cur:
+                    pid = _insert_pipeline(
+                        cur, pmid, None, p.get("assay_type"),
+                        p["title"], "pmc_methods", raw,
+                        p["steps"], method_ids,
+                    )
+                    if pid:
+                        pipeline_count += 1
+
+    return pipeline_count
+
+
+# ============================================================
+# Pipeline Update Orchestrator
+# ============================================================
+
+def start_pipeline_update():
+    """Start a background pipeline extraction update.
+    Returns True if started, False if already running.
+    Requires biopython and requests (runs locally only)."""
+    with _status_lock:
+        if _update_status["running"]:
+            return False
+        _update_status.update({
+            "running": True,
+            "progress": "Starting pipeline extraction...",
+            "log": [],
+            "started_at": datetime.now().isoformat(),
+            "finished_at": None,
+            "error": None,
+            "stats": {},
+        })
+
+    t = threading.Thread(target=_run_pipeline_update, daemon=True)
+    t.start()
+    return True
+
+
+def _run_pipeline_update():
+    """Background worker for pipeline extraction."""
+    try:
+        _log("Starting analysis pipeline extraction...")
+
+        _log("Ensuring analysis_pipelines and pipeline_steps tables exist...")
+        _ensure_pipeline_tables()
+        _ensure_methods_tables()
+
+        with connection.cursor() as cur:
+            cur.execute("DELETE FROM pipeline_steps")
+            cur.execute("DELETE FROM analysis_pipelines")
+        _log("Cleared existing pipeline data for fresh extraction")
+
+        method_ids = _get_method_ids()
+        if not method_ids:
+            _log("Warning: No computational methods found. Run 'Extract Methods' first for tool linking.")
+
+        geo_count = _run_geo_pipeline_extraction(method_ids)
+        pmc_count = _run_pmc_pipeline_extraction(method_ids)
+
+        with connection.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM analysis_pipelines")
+            total_pipelines = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM pipeline_steps")
+            total_steps = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(DISTINCT pmid) FROM analysis_pipelines")
+            pubs_with_pipelines = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(DISTINCT assay_type) FROM analysis_pipelines WHERE assay_type IS NOT NULL")
+            assay_types = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(DISTINCT method_id) FROM pipeline_steps WHERE method_id IS NOT NULL")
+            tools_linked = cur.fetchone()[0]
+
+            stats = {
+                "pipelines": total_pipelines,
+                "steps": total_steps,
+                "pubs_with_pipelines": pubs_with_pipelines,
+                "assay_types": assay_types,
+                "tools_linked": tools_linked,
+                "geo_pipelines": geo_count,
+                "pmc_pipelines": pmc_count,
+            }
+
+        _set_status(stats=stats)
+        _log(f"Pipeline extraction complete! {total_pipelines} pipelines, {total_steps} steps, "
+             f"{pubs_with_pipelines} publications, {tools_linked} tools linked")
+
+        with connection.cursor() as cur:
+            cur.execute(
+                """INSERT INTO update_log (new_pmids_added, notes)
+                   VALUES (%s, %s)""",
+                [0, f"Pipeline extraction: {total_pipelines} pipelines, {total_steps} steps, "
+                    f"GEO={geo_count}, PMC={pmc_count}"],
+            )
+
+    except Exception as e:
+        import traceback
+        _log(f"ERROR (pipelines): {e}")
+        _log(traceback.format_exc())
+        _set_status(error=str(e))
+    finally:
+        _set_status(running=False, finished_at=datetime.now().isoformat())

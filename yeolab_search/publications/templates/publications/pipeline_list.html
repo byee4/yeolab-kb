@@ -1,0 +1,116 @@
+{% extends "publications/base.html" %}
+{% load pub_extras %}
+{% block title %}Analysis — Yeo Lab Publications{% endblock %}
+
+{% block content %}
+<h1 class="text-xl font-bold text-ucsd-blue mb-4">Analysis ({{ total }})</h1>
+
+<form method="get" class="bg-white rounded-lg shadow-sm border p-4 mb-6">
+  <div class="grid md:grid-cols-4 gap-3">
+    <div>
+      <label class="block text-xs font-medium text-gray-500 mb-1">Search</label>
+      <input type="text" name="q" value="{{ q }}" placeholder="Tool, method, or keyword…"
+             class="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-gray-500 mb-1">Assay Type</label>
+      <select name="assay" class="w-full px-3 py-2 border rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+        <option value="">All assays</option>
+        {% for a in assay_types %}
+        <option value="{{ a.assay_type }}" {% if a.assay_type == assay %}selected{% endif %}>
+          {{ a.assay_type }} ({{ a.count }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-gray-500 mb-1">Source</label>
+      <select name="source" class="w-full px-3 py-2 border rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+        <option value="">All sources</option>
+        {% for s in source_counts %}
+        <option value="{{ s.source }}" {% if s.source == source %}selected{% endif %}>
+          {{ s.source }} ({{ s.count }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="flex items-end gap-2">
+      <button type="submit" class="px-5 py-2 bg-ucsd-sky text-white rounded text-sm font-medium hover:bg-ucsd-blue transition">
+        Filter
+      </button>
+      <a href="{% url 'publications:analysis_list' %}" class="px-5 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50">Clear</a>
+    </div>
+  </div>
+</form>
+
+<div class="space-y-3">
+{% for p in page %}
+<div class="bg-white rounded-lg shadow-sm border p-4 hover:shadow-md transition">
+  <div class="flex items-start justify-between gap-4">
+    <div class="flex-1 min-w-0">
+      {% if p.is_db %}
+      <a href="{% url 'publications:analysis_detail' p.id %}"
+         class="text-sm font-semibold text-ucsd-sky hover:underline">
+        {{ p.pipeline_title|default:"Analysis Pipeline" }}
+      </a>
+      {% else %}
+      <a href="{% url 'publications:analysis_detail_by_accession' p.id %}"
+         class="text-sm font-semibold text-ucsd-sky hover:underline">
+        {{ p.pipeline_title|default:"Analysis Pipeline" }}
+      </a>
+      {% endif %}
+      <p class="text-xs text-gray-500 mt-1 truncate">
+        {% if p.pmid_id %}
+          <a href="{% url 'publications:publication_detail' p.pmid_id %}" class="hover:text-ucsd-sky">
+            {{ p.pub_title|truncatechars:100 }}
+          </a>
+        {% endif %}
+      </p>
+    </div>
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <span class="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{{ p.step_count }} step{{ p.step_count|pluralize }}</span>
+    </div>
+  </div>
+  <div class="flex flex-wrap gap-1.5 mt-2">
+    {% if p.assay_type %}
+    <span class="text-xs bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded">{{ p.assay_type }}</span>
+    {% endif %}
+    <span class="text-xs bg-gray-50 text-gray-500 px-1.5 py-0.5 rounded">{{ p.source }}</span>
+    {% if p.accession %}
+    {% if p.accession_id %}
+    <a href="{% url 'publications:dataset_detail' p.accession_id %}"
+       class="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded hover:bg-blue-100">
+      {{ p.accession }}
+    </a>
+    {% else %}
+    <span class="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">{{ p.accession }}</span>
+    {% endif %}
+    {% endif %}
+    {% if p.pub_year %}
+    <span class="text-xs text-gray-400">{{ p.pub_year }}</span>
+    {% endif %}
+  </div>
+</div>
+{% empty %}
+<div class="text-center text-gray-400 py-12">
+  No analysis pipelines found. Add code examples via the Admin panel's Code Editor.
+</div>
+{% endfor %}
+</div>
+
+{% if page.has_other_pages %}
+<div class="flex justify-center gap-2 mt-6">
+  {% if page.has_previous %}
+  <a href="{% query_string page=page.previous_page_number %}"
+     class="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">&laquo; Prev</a>
+  {% endif %}
+  <span class="px-3 py-1.5 text-sm text-gray-500">
+    Page {{ page.number }} of {{ page.paginator.num_pages }}
+  </span>
+  {% if page.has_next %}
+  <a href="{% query_string page=page.next_page_number %}"
+     class="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">Next &raquo;</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

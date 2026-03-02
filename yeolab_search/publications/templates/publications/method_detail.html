@@ -1,0 +1,71 @@
+{% extends "publications/base.html" %}
+{% block title %}{{ method.canonical_name }} — Yeo Lab Publications{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <div class="flex items-center gap-3 mb-2">
+    <h1 class="text-2xl font-bold text-ucsd-blue">{{ method.canonical_name }}</h1>
+    <span class="text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded font-medium">{{ method.category }}</span>
+  </div>
+  {% if method.url %}
+  <a href="{{ method.url }}" target="_blank" rel="noopener"
+     class="text-sm text-ucsd-sky hover:underline">{{ method.url }} &nearr;</a>
+  {% endif %}
+  {% if method.description %}
+  <p class="text-sm text-gray-600 mt-2">{{ method.description }}</p>
+  {% endif %}
+</div>
+
+<!-- Summary stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+  <div class="bg-white rounded-lg shadow-sm border p-4 text-center">
+    <div class="text-2xl font-bold text-ucsd-sky">{{ total_pubs }}</div>
+    <div class="text-xs text-gray-500 mt-1">Publication{{ total_pubs|pluralize }}</div>
+  </div>
+  {% for source, count in source_counts.items %}
+  <div class="bg-white rounded-lg shadow-sm border p-4 text-center">
+    <div class="text-2xl font-bold text-gray-700">{{ count }}</div>
+    <div class="text-xs text-gray-500 mt-1">{{ source }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Publications using this method -->
+<div class="bg-white rounded-lg shadow-sm border p-6">
+  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4">Publications</h2>
+
+  {% for entry in publications %}
+  <div class="{% if not forloop.first %}border-t border-gray-100{% endif %} py-3">
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex-1 min-w-0">
+        <a href="{% url 'publications:publication_detail' entry.publication.pmid %}"
+           class="text-sm font-medium text-ucsd-sky hover:underline">
+          {{ entry.publication.title|truncatewords:25 }}
+        </a>
+        <div class="flex flex-wrap items-center gap-2 mt-1">
+          <span class="text-xs text-gray-500">{{ entry.publication.journal_name|default:"—" }}</span>
+          {% if entry.publication.pub_year %}
+          <span class="text-xs text-gray-400">({{ entry.publication.pub_year }})</span>
+          {% endif %}
+          <span class="text-xs font-mono text-gray-400">PMID:{{ entry.publication.pmid }}</span>
+          {% if entry.version %}
+          <span class="text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">v{{ entry.version }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-1 shrink-0">
+        {% for src in entry.sources %}
+        <span class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{{ src }}</span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% empty %}
+  <p class="text-sm text-gray-400">No publications linked to this method.</p>
+  {% endfor %}
+</div>
+
+<div class="mt-4">
+  <a href="{% url 'publications:method_list' %}" class="text-sm text-ucsd-sky hover:underline">&larr; Back to all methods</a>
+</div>
+{% endblock %}

@@ -1,0 +1,587 @@
+{% extends "publications/base.html" %}
+{% block title %}Code Examples Editor — Yeo Lab Publications{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <h1 class="text-xl font-bold text-ucsd-blue">Code Examples Editor</h1>
+  <p class="text-sm text-gray-600 mt-1">
+    Browse and edit per-dataset code example files, organized by publication year/month.
+    Each file is at <code>code_examples/{year}/{month}/{accession}.json</code>.
+  </p>
+</div>
+
+<!-- GitHub Status -->
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-4">
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <svg class="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+      <div>
+        <span class="text-sm font-medium text-gray-700">{{ github_repo }}</span>
+        <span class="text-xs text-gray-400 ml-2">code_examples/ @ {{ github_branch }}</span>
+      </div>
+      {% if pat_configured %}
+      <span class="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">PAT configured</span>
+      {% else %}
+      <span class="text-xs bg-red-50 text-red-700 px-2 py-0.5 rounded">No PAT — push disabled</span>
+      {% endif %}
+    </div>
+    <div class="text-xs text-gray-400"><span id="dataset-count">{{ dataset_count }}</span> dataset(s)</div>
+  </div>
+</div>
+
+<!-- Status messages -->
+<div id="editor-status" class="hidden mb-4">
+  <div id="editor-status-content" class="rounded border p-3 text-sm"></div>
+</div>
+
+<!-- Main layout: sidebar + editor -->
+<div class="flex gap-4" style="min-height: 650px;">
+
+  <!-- Left sidebar: dataset list -->
+  <div class="w-72 flex-shrink-0 bg-white rounded-lg shadow-sm border flex flex-col">
+    <div class="p-3 border-b">
+      <input type="text" id="dataset-search" placeholder="Search datasets..."
+             class="w-full px-3 py-1.5 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-ucsd-sky">
+    </div>
+    <div class="p-2 border-b">
+      <button onclick="newDataset()" class="w-full px-3 py-1.5 text-xs bg-ucsd-sky text-white rounded hover:bg-ucsd-blue transition">
+        + New Dataset
+      </button>
+    </div>
+    <div id="dataset-list" class="flex-1 overflow-y-auto" style="max-height: 560px;">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+
+  <!-- Right: editor area -->
+  <div class="flex-1 flex flex-col">
+    <!-- Selected dataset header + action buttons -->
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <span id="selected-label" class="text-sm font-semibold text-gray-700">No dataset selected</span>
+        <span id="selected-path" class="text-xs text-gray-400 ml-2"></span>
+        <span id="selected-badge" class="hidden text-xs bg-ucsd-gold text-white px-2 py-0.5 rounded ml-2">editing</span>
+        <div id="last-save-path" class="hidden text-xs text-gray-500 mt-1"></div>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="fetchFromGitHub()" id="btn-fetch"
+                class="px-3 py-1.5 bg-gray-600 text-white text-xs rounded hover:bg-gray-700 transition disabled:opacity-50" disabled>
+          Fetch from GitHub
+        </button>
+        <button onclick="saveLocally()" id="btn-save"
+                class="px-3 py-1.5 bg-ucsd-sky text-white text-xs rounded hover:bg-ucsd-blue transition disabled:opacity-50" disabled>
+          Save Locally
+        </button>
+        <button onclick="pushToGitHub()" id="btn-push"
+                class="px-3 py-1.5 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition disabled:opacity-50"
+                disabled>
+          Save & Push to GitHub
+        </button>
+        <button onclick="deleteDataset()" id="btn-delete"
+                class="px-3 py-1.5 bg-red-600 text-white text-xs rounded hover:bg-red-700 transition disabled:opacity-50" disabled>
+          Delete
+        </button>
+        <button onclick="formatJSON()" id="btn-format"
+                class="px-3 py-1.5 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300 transition disabled:opacity-50" disabled>
+          Format
+        </button>
+      </div>
+    </div>
+
+    <!-- CodeMirror Editor -->
+    <div class="bg-white rounded-lg shadow-sm border overflow-hidden flex-1">
+      <textarea id="json-editor"></textarea>
+    </div>
+  </div>
+</div>
+
+<!-- Raw Source Text (read-only, populated by Extract Analysis) -->
+<div id="raw-text-section" class="mt-4 hidden">
+  <details class="bg-white rounded-lg shadow-sm border">
+    <summary class="p-4 cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wide hover:text-gray-700">
+      Raw Source Text <span class="text-gray-400 font-normal">(from last Extract Analysis — read-only)</span>
+    </summary>
+    <div class="px-4 pb-4">
+      <pre id="raw-text-content" class="text-xs text-gray-600 whitespace-pre-wrap font-mono bg-gray-50 rounded p-3 max-h-64 overflow-y-auto"></pre>
+      <p id="raw-text-source" class="text-xs text-gray-400 mt-2"></p>
+    </div>
+  </details>
+</div>
+
+<!-- Schema Reference -->
+<details class="mt-4 bg-white rounded-lg shadow-sm border">
+  <summary class="p-4 cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wide hover:text-gray-700">
+    Schema Reference
+  </summary>
+  <div class="px-4 pb-4">
+    <pre class="text-xs text-gray-600 bg-gray-50 rounded p-3 font-mono whitespace-pre-wrap">{
+  "steps": [
+    {
+      "step_order": 1,
+      "description": "Adapter trimming with cutadapt",
+      "tool_name": "cutadapt",
+      "tool_version": "2.5",
+      "code_example": "cutadapt -a AGATCGGAAG... -o trimmed.fq input.fq",
+      "code_language": "bash",
+      "github_url": "https://github.com/marcelm/cutadapt"
+    }
+  ],
+  "locked": true,            // If true, Extract Analysis will NOT overwrite this file
+  "raw_text": "...",           // Set by Extract Analysis (read-only, never edit)
+  "raw_text_source": "..."     // "geo_data_processing" or "pmc_methods"
+}</pre>
+    <p class="text-xs text-gray-500 mt-2">Files are stored at: <code>code_examples/{year}/{month}/{ACCESSION}.json</code></p>
+    <p class="text-xs text-gray-500 mt-1"><strong>Locking:</strong> set <code>"locked": true</code> to protect a JSON file from future "Extract Analysis" overwrites. Set <code>false</code> to allow overwrites.</p>
+    <p class="text-xs text-gray-500 mt-1"><strong>Note:</strong> <code>raw_text</code> and <code>raw_text_source</code> are set automatically by "Extract Analysis" and should not be edited manually.</p>
+  </div>
+</details>
+
+<a href="{% url 'publications:admin_panel' %}" class="text-sm text-ucsd-sky hover:underline mt-4 inline-block">&larr; Back to Admin</a>
+
+{% endblock %}
+
+{% block scripts %}
+<!-- CodeMirror CDN -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+<style>
+.CodeMirror {
+  height: 100%;
+  min-height: 550px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+#dataset-list .ds-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  border-bottom: 1px solid #f3f4f6;
+  color: #374151;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+#dataset-list .ds-item:hover {
+  background: #eff6ff;
+}
+#dataset-list .ds-item.active {
+  background: #dbeafe;
+  font-weight: 600;
+  color: #1e40af;
+}
+#dataset-list .ds-item .ds-accession {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+#dataset-list .ds-item .ds-path {
+  font-size: 10px;
+  color: #9ca3af;
+}
+#dataset-list .ds-item.active .ds-path {
+  color: #60a5fa;
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/brace-fold.min.js"></script>
+
+<script>
+const csrfToken = '{{ csrf_token }}';
+const patConfigured = {{ pat_configured|yesno:"true,false" }};
+let editor;
+// allDatasets is now [{accession, path}, ...]
+let allDatasets = {{ datasets_json|safe }};
+let selectedAccession = null;
+let selectedPath = '';
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+  editor = CodeMirror.fromTextArea(document.getElementById('json-editor'), {
+    mode: {name: 'javascript', json: true},
+    theme: 'dracula',
+    lineNumbers: true,
+    matchBrackets: true,
+    autoCloseBrackets: true,
+    foldGutter: true,
+    gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
+    indentUnit: 2,
+    tabSize: 2,
+    lineWrapping: true,
+  });
+
+  renderDatasetList(allDatasets);
+
+  // Search filter
+  document.getElementById('dataset-search').addEventListener('input', function() {
+    const q = this.value.toLowerCase().trim();
+    if (!q) {
+      renderDatasetList(allDatasets);
+    } else {
+      renderDatasetList(allDatasets.filter(d =>
+        d.accession.toLowerCase().includes(q) || d.path.toLowerCase().includes(q)
+      ));
+    }
+  });
+});
+
+function displayPath(d) {
+  return d.path ? d.path + '/' + d.accession : d.accession;
+}
+
+function renderDatasetList(datasets) {
+  const container = document.getElementById('dataset-list');
+  if (datasets.length === 0) {
+    container.innerHTML = '<div class="p-3 text-xs text-gray-400 text-center">No datasets found</div>';
+    return;
+  }
+  container.innerHTML = datasets.map(d =>
+    `<div class="ds-item ${d.accession === selectedAccession ? 'active' : ''}"
+          onclick="selectDataset('${d.accession}')">
+      <span class="ds-accession">${d.accession}</span>
+      ${d.path ? `<span class="ds-path">${d.path}/</span>` : ''}
+    </div>`
+  ).join('');
+}
+
+function selectDataset(accession) {
+  selectedAccession = accession;
+
+  // Find path from allDatasets
+  const ds = allDatasets.find(d => d.accession === accession);
+  selectedPath = ds ? ds.path : '';
+
+  document.getElementById('selected-label').textContent = accession;
+  document.getElementById('selected-path').textContent = selectedPath ? selectedPath + '/' : '';
+  document.getElementById('selected-badge').classList.remove('hidden');
+
+  // Enable buttons
+  document.getElementById('btn-fetch').disabled = false;
+  document.getElementById('btn-save').disabled = false;
+  document.getElementById('btn-push').disabled = !patConfigured;
+  document.getElementById('btn-delete').disabled = false;
+  document.getElementById('btn-format').disabled = false;
+
+  // Highlight in list
+  document.querySelectorAll('#dataset-list .ds-item').forEach(el => {
+    const acc = el.querySelector('.ds-accession').textContent;
+    el.classList.toggle('active', acc === accession);
+  });
+
+  // Load content
+  showStatus('Loading ' + accession + '...', 'loading');
+  fetch(`{% url "publications:admin_code_editor" %}dataset/${accession}/`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        editor.setValue(data.content);
+        if (data.path) selectedPath = data.path;
+        showStatus('Loaded ' + accession, 'success');
+        setTimeout(() => hideStatus(), 2000);
+        // Show raw source text (read-only) if available
+        updateRawTextSection(data.raw_text, data.raw_text_source);
+      } else {
+        showStatus('Error loading ' + accession + ': ' + data.error, 'error');
+        updateRawTextSection('', '');
+      }
+    })
+    .catch(err => {
+      showStatus('Failed to load: ' + err, 'error');
+      updateRawTextSection('', '');
+    });
+}
+
+function updateRawTextSection(rawText, rawTextSource) {
+  const section = document.getElementById('raw-text-section');
+  const content = document.getElementById('raw-text-content');
+  const source = document.getElementById('raw-text-source');
+  if (rawText) {
+    content.textContent = rawText;
+    source.textContent = rawTextSource ? 'Source: ' + rawTextSource : '';
+    section.classList.remove('hidden');
+  } else {
+    section.classList.add('hidden');
+    content.textContent = '';
+    source.textContent = '';
+  }
+}
+
+function newDataset() {
+  const accession = prompt('Enter dataset accession (e.g. GSE137810, ENCSR519QAA):');
+  if (!accession) return;
+
+  const clean = accession.trim();
+  if (!clean || !/^[A-Za-z0-9_-]+$/.test(clean)) {
+    showStatus('Invalid accession. Use only letters, numbers, hyphens, underscores.', 'error');
+    return;
+  }
+
+  // Check if already exists
+  if (allDatasets.find(d => d.accession === clean)) {
+    selectDataset(clean);
+    return;
+  }
+
+  // Look up publication date for this accession
+  showStatus('Looking up publication date for ' + clean + '...', 'loading');
+  fetch(`{% url "publications:admin_code_editor" %}lookup-date/${clean}/`)
+    .then(r => r.json())
+    .then(data => {
+      let year = '', monthAbbr = '';
+      if (data.ok) {
+        year = data.year;
+        monthAbbr = data.month_abbr;
+        showStatus(`Found: published ${monthAbbr} ${year}`, 'success');
+      } else {
+        showStatus('No publication date found. Enter year/month manually or save to root.', 'info');
+        year = prompt('Publication year (e.g. 2020):') || '';
+        monthAbbr = prompt('Publication month (e.g. Oct):') || '';
+      }
+
+      const path = (year && monthAbbr) ? `${year}/${monthAbbr}` : '';
+
+      selectedAccession = clean;
+      selectedPath = path;
+      allDatasets.push({accession: clean, path: path});
+      allDatasets.sort((a, b) => a.accession.localeCompare(b.accession));
+      renderDatasetList(allDatasets);
+
+      document.getElementById('selected-label').textContent = clean;
+      document.getElementById('selected-path').textContent = path ? path + '/' : '';
+      document.getElementById('selected-badge').classList.remove('hidden');
+      document.getElementById('btn-fetch').disabled = false;
+      document.getElementById('btn-save').disabled = false;
+      document.getElementById('btn-push').disabled = !patConfigured;
+      document.getElementById('btn-delete').disabled = false;
+      document.getElementById('btn-format').disabled = false;
+      document.getElementById('dataset-count').textContent = allDatasets.length;
+
+      const template = JSON.stringify({
+        steps: [{
+          step_order: 1,
+          description: "",
+          tool_name: "",
+          tool_version: "",
+          code_example: "",
+          code_language: "bash",
+          github_url: ""
+        }]
+      }, null, 2);
+      editor.setValue(template);
+    })
+    .catch(err => {
+      showStatus('Error looking up date: ' + err, 'error');
+    });
+}
+
+function showStatus(message, type) {
+  const panel = document.getElementById('editor-status');
+  const content = document.getElementById('editor-status-content');
+  panel.classList.remove('hidden');
+
+  const colors = {
+    success: 'bg-green-50 border-green-200 text-green-700',
+    error: 'bg-red-50 border-red-200 text-red-700',
+    info: 'bg-blue-50 border-blue-200 text-blue-700',
+    loading: 'bg-gray-50 border-gray-200 text-gray-600',
+  };
+  content.className = 'rounded border p-3 text-sm ' + (colors[type] || colors.info);
+  content.textContent = message;
+}
+
+function hideStatus() {
+  document.getElementById('editor-status').classList.add('hidden');
+}
+
+function postJSON(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'X-CSRFToken': csrfToken,
+    },
+    body: body,
+  }).then(r => r.json());
+}
+
+function formatJSON() {
+  try {
+    const data = JSON.parse(editor.getValue());
+    editor.setValue(JSON.stringify(data, null, 2));
+    showStatus('JSON formatted.', 'success');
+    setTimeout(() => hideStatus(), 1500);
+  } catch (e) {
+    showStatus('Invalid JSON: ' + e.message, 'error');
+  }
+}
+
+function fetchFromGitHub() {
+  if (!selectedAccession) return;
+  showStatus('Fetching ' + selectedAccession + ' from GitHub...', 'loading');
+  document.getElementById('btn-fetch').disabled = true;
+
+  let params = 'accession=' + encodeURIComponent(selectedAccession);
+  if (selectedPath) {
+    params += '&path=' + encodeURIComponent(selectedPath);
+  }
+  postJSON('{% url "publications:admin_code_editor_fetch" %}', params)
+  .then(data => {
+    document.getElementById('btn-fetch').disabled = false;
+    if (data.ok) {
+      editor.setValue(data.content);
+      if (data.path) {
+        selectedPath = data.path;
+        document.getElementById('selected-path').textContent = selectedPath + '/';
+      }
+      showStatus('Fetched ' + selectedAccession + ' from GitHub.', 'success');
+    } else {
+      showStatus('Error: ' + (data.error || 'Unknown error'), 'error');
+    }
+  })
+  .catch(err => {
+    document.getElementById('btn-fetch').disabled = false;
+    showStatus('Request failed: ' + err, 'error');
+  });
+}
+
+function saveLocally() {
+  if (!selectedAccession) return;
+  const content = editor.getValue();
+
+  try { JSON.parse(content); } catch (e) {
+    showStatus('Invalid JSON: ' + e.message, 'error');
+    return;
+  }
+
+  showStatus('Saving ' + selectedAccession + '...', 'loading');
+  document.getElementById('btn-save').disabled = true;
+
+  // Parse year/month from selectedPath (e.g. "2020/Oct")
+  let params = 'accession=' + encodeURIComponent(selectedAccession) + '&content=' + encodeURIComponent(content);
+  if (selectedPath) {
+    const parts = selectedPath.split('/');
+    if (parts.length >= 2) {
+      params += '&year=' + encodeURIComponent(parts[0]) + '&month=' + encodeURIComponent(parts[1]);
+    }
+  }
+
+  postJSON('{% url "publications:admin_code_editor_save" %}', params)
+  .then(data => {
+    document.getElementById('btn-save').disabled = false;
+    if (data.ok) {
+      // Ensure it's in the list
+      if (!allDatasets.find(d => d.accession === selectedAccession)) {
+        allDatasets.push({accession: selectedAccession, path: selectedPath});
+        allDatasets.sort((a, b) => a.accession.localeCompare(b.accession));
+        renderDatasetList(allDatasets);
+        document.getElementById('dataset-count').textContent = allDatasets.length;
+      }
+      const lastSavePath = document.getElementById('last-save-path');
+      if (data.path) {
+        lastSavePath.textContent = 'Last local save: ' + data.path;
+        lastSavePath.classList.remove('hidden');
+      }
+      showStatus('Saved ' + selectedAccession + ' locally at ' + (data.path || '[unknown path]') + '.', 'success');
+    } else {
+      showStatus('Error: ' + (data.error || 'Unknown error'), 'error');
+    }
+  })
+  .catch(err => {
+    document.getElementById('btn-save').disabled = false;
+    showStatus('Request failed: ' + err, 'error');
+  });
+}
+
+function pushToGitHub() {
+  if (!selectedAccession) return;
+  const content = editor.getValue();
+
+  try { JSON.parse(content); } catch (e) {
+    showStatus('Invalid JSON: ' + e.message, 'error');
+    return;
+  }
+
+  const pathLabel = selectedPath ? selectedPath + '/' + selectedAccession : selectedAccession;
+  if (!confirm('Push ' + pathLabel + '.json to GitHub?')) return;
+
+  showStatus('Saving and pushing ' + selectedAccession + ' to GitHub...', 'loading');
+  document.getElementById('btn-push').disabled = true;
+
+  let params = 'accession=' + encodeURIComponent(selectedAccession) + '&content=' + encodeURIComponent(content);
+  if (selectedPath) {
+    const parts = selectedPath.split('/');
+    if (parts.length >= 2) {
+      params += '&year=' + encodeURIComponent(parts[0]) + '&month=' + encodeURIComponent(parts[1]);
+    }
+  }
+
+  postJSON('{% url "publications:admin_code_editor_push" %}', params)
+  .then(data => {
+    document.getElementById('btn-push').disabled = !patConfigured;
+    if (data.ok) {
+      let msg = 'Saved and pushed ' + selectedAccession + ' to GitHub.';
+      if (data.commit_sha) msg += ' Commit: ' + data.commit_sha.substring(0, 8);
+      showStatus(msg, 'success');
+    } else {
+      showStatus('Error: ' + (data.error || 'Unknown error'), 'error');
+    }
+  })
+  .catch(err => {
+    document.getElementById('btn-push').disabled = !patConfigured;
+    showStatus('Request failed: ' + err, 'error');
+  });
+}
+
+function deleteDataset() {
+  if (!selectedAccession) return;
+  const pathLabel = selectedPath ? selectedPath + '/' + selectedAccession : selectedAccession;
+  const doRemote = confirm(
+    'Delete ' + pathLabel + '.json?\n\n' +
+    'Click OK to delete locally AND from GitHub.\n' +
+    'Click Cancel to skip.'
+  );
+  if (!doRemote && !confirm('Delete ' + pathLabel + '.json locally only?')) {
+    return;
+  }
+
+  showStatus('Deleting ' + selectedAccession + '...', 'loading');
+  let body = 'accession=' + encodeURIComponent(selectedAccession);
+  if (doRemote) body += '&delete_remote=1';
+
+  postJSON('{% url "publications:admin_code_editor_delete" %}', body)
+  .then(data => {
+    if (data.ok) {
+      allDatasets = allDatasets.filter(d => d.accession !== selectedAccession);
+      renderDatasetList(allDatasets);
+      document.getElementById('dataset-count').textContent = allDatasets.length;
+
+      editor.setValue('');
+      selectedAccession = null;
+      selectedPath = '';
+      document.getElementById('selected-label').textContent = 'No dataset selected';
+      document.getElementById('selected-path').textContent = '';
+      document.getElementById('selected-badge').classList.add('hidden');
+      document.getElementById('btn-fetch').disabled = true;
+      document.getElementById('btn-save').disabled = true;
+      document.getElementById('btn-push').disabled = true;
+      document.getElementById('btn-delete').disabled = true;
+      document.getElementById('btn-format').disabled = true;
+
+      let msg = 'Deleted locally.';
+      if (data.deleted_remote) msg += ' Also removed from GitHub.';
+      if (data.remote_error) msg += ' (GitHub: ' + data.remote_error + ')';
+      showStatus(msg, 'success');
+    } else {
+      showStatus('Error: ' + (data.error || 'Unknown error'), 'error');
+    }
+  })
+  .catch(err => showStatus('Request failed: ' + err, 'error'));
+}
+</script>
+{% endblock %}

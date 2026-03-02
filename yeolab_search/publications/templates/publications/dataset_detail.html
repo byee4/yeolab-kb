@@ -165,6 +165,35 @@
   {% endif %}
 </div>
 
+{% if analysis_accession and analysis_steps %}
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+      Analysis ({{ analysis_steps|length }} step{{ analysis_steps|length|pluralize }})
+    </h2>
+    <a href="{% url 'publications:analysis_detail_by_accession' analysis_accession %}"
+       class="text-xs text-ucsd-sky hover:underline">
+      View Full Analysis
+    </a>
+  </div>
+  <div class="text-xs text-gray-500 mb-2">
+    Processing steps for <span class="font-mono text-gray-700">{{ analysis_accession }}</span>
+  </div>
+  <ol class="list-decimal list-inside space-y-1 text-sm text-gray-700">
+    {% for step in analysis_steps|slice:":8" %}
+    <li>
+      {{ step.description|default:"(No description)" }}
+    </li>
+    {% endfor %}
+  </ol>
+  {% if analysis_steps|length > 8 %}
+  <div class="text-xs text-gray-500 mt-2">
+    Showing first 8 steps.
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
 <!-- Supplementary files -->
 {% if supplementary_files %}
 <div class="bg-white rounded-lg shadow-sm border p-6 mb-6">

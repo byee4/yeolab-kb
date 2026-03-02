@@ -3,6 +3,16 @@ Unmanaged Django models mapping to the existing yeolab_publications.db schema.
 All models use `managed = False` so Django never tries to create/alter these tables.
 """
 from django.db import models
+from django.conf import settings
+
+
+def _junction_pk_column():
+    """
+    Junction tables use SQLite implicit `rowid` in SQLite DBs, but explicit `id`
+    in PostgreSQL schema. Choose the correct PK column for the active backend.
+    """
+    engine = settings.DATABASES.get("default", {}).get("ENGINE", "")
+    return "id" if "postgresql" in engine else "rowid"
 
 
 class Publication(models.Model):
@@ -90,9 +100,7 @@ class Author(models.Model):
 
 
 class PublicationAuthor(models.Model):
-    # Composite PK (pmid, author_id, author_position)
-    # AutoField works for both SQLite (implicit rowid) and PostgreSQL (SERIAL)
-    id = models.AutoField(primary_key=True)
+    id = models.IntegerField(primary_key=True, db_column=_junction_pk_column())
     pmid = models.ForeignKey(
         Publication, on_delete=models.DO_NOTHING, db_column="pmid"
     )
@@ -156,7 +164,7 @@ class DatasetAccession(models.Model):
 
 
 class PublicationDataset(models.Model):
-    id = models.AutoField(primary_key=True)
+    id = models.IntegerField(primary_key=True, db_column=_junction_pk_column())
     pmid = models.ForeignKey(
         Publication, on_delete=models.DO_NOTHING, db_column="pmid"
     )
@@ -215,7 +223,7 @@ class Grant(models.Model):
 
 
 class PublicationGrant(models.Model):
-    id = models.AutoField(primary_key=True)
+    id = models.IntegerField(primary_key=True, db_column=_junction_pk_column())
     pmid = models.ForeignKey(
         Publication, on_delete=models.DO_NOTHING, db_column="pmid"
     )
@@ -294,3 +302,90 @@ class SraRun(models.Model):
 
     def __str__(self):
         return self.srr_accession
+
+
+class ComputationalMethod(models.Model):
+    method_id = models.AutoField(primary_key=True)
+    canonical_name = models.TextField(unique=True)
+    category = models.TextField()
+    url = models.TextField(blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = "computational_methods"
+
+    def __str__(self):
+        return f"{self.canonical_name} [{self.category}]"
+
+
+class PublicationMethod(models.Model):
+    id = models.AutoField(primary_key=True)
+    pmid = models.ForeignKey(
+        Publication, on_delete=models.DO_NOTHING, db_column="pmid"
+    )
+    method = models.ForeignKey(
+        ComputationalMethod, on_delete=models.DO_NOTHING, db_column="method_id"
+    )
+    version = models.TextField(blank=True, null=True)
+    source_type = models.TextField()
+    matched_text = models.TextField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = "publication_methods"
+
+    def __str__(self):
+        return f"{self.pmid_id} — {self.method}"
+
+
+class AnalysisPipeline(models.Model):
+    pipeline_id = models.AutoField(primary_key=True)
+    pmid = models.ForeignKey(
+        Publication, on_delete=models.DO_NOTHING, db_column="pmid"
+    )
+    accession = models.ForeignKey(
+        DatasetAccession, on_delete=models.DO_NOTHING,
+        db_column="accession_id", blank=True, null=True,
+    )
+    assay_type = models.TextField(blank=True, null=True)
+    pipeline_title = models.TextField(blank=True, null=True)
+    source = models.TextField()
+    raw_text = models.TextField(blank=True, null=True)
+    created_at = models.TextField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = "analysis_pipelines"
+
+    def __str__(self):
+        title = self.pipeline_title or self.assay_type or "Pipeline"
+        return f"{self.pmid_id}: {title}"
+
+
+class PipelineStep(models.Model):
+    step_id = models.AutoField(primary_key=True)
+    pipeline = models.ForeignKey(
+        AnalysisPipeline, on_delete=models.DO_NOTHING,
+        db_column="pipeline_id",
+    )
+    step_order = models.IntegerField()
+    description = models.TextField()
+    method = models.ForeignKey(
+        ComputationalMethod, on_delete=models.DO_NOTHING,
+        db_column="method_id", blank=True, null=True,
+    )
+    tool_name = models.TextField(blank=True, null=True)
+    tool_version = models.TextField(blank=True, null=True)
+    parameters = models.TextField(blank=True, null=True)
+    code_example = models.TextField(blank=True, null=True)
+    code_language = models.TextField(blank=True, null=True)
+    github_url = models.TextField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = "pipeline_steps"
+        ordering = ["step_order"]
+
+    def __str__(self):
+        return f"Step {self.step_order}: {self.description[:60]}"

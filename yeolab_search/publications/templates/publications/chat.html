@@ -100,6 +100,14 @@
         Send
       </button>
     </div>
+    <!-- Running costs indicator -->
+    <div id="usage-bar" class="hidden mt-2 flex items-center justify-between text-xs text-gray-400">
+      <div class="flex items-center gap-3">
+        <span id="usage-tokens" title="Total tokens used this session"></span>
+        <span id="usage-cost" title="Estimated cost this session"></span>
+      </div>
+      <button onclick="resetUsage()" class="text-gray-300 hover:text-gray-500 transition" title="Reset session counter">reset</button>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -139,6 +147,118 @@ const PROVIDER_META = {
     keyUrl: 'https://platform.openai.com/api-keys',
   },
 };
+
+// =============================================
+// Pricing ($ per million tokens) — updated as of 2025
+// =============================================
+const MODEL_PRICING = {
+  // Claude models (input, output per MTok)
+  'claude-sonnet-4-20250514':       { input: 3.00,  output: 15.00 },
+  'claude-3-7-sonnet-latest':       { input: 3.00,  output: 15.00 },
+  'claude-3-5-haiku-latest':        { input: 0.80,  output: 4.00  },
+  'claude-3-5-sonnet-20241022':     { input: 3.00,  output: 15.00 },
+  'claude-3-opus-20240229':         { input: 15.00, output: 75.00 },
+  // OpenAI models
+  'gpt-5':                          { input: 2.00,  output: 8.00  },
+  'gpt-5-mini':                     { input: 0.40,  output: 1.60  },
+  'gpt-4.1':                        { input: 2.00,  output: 8.00  },
+  'gpt-4.1-mini':                   { input: 0.40,  output: 1.60  },
+  'gpt-4o':                         { input: 2.50,  output: 10.00 },
+  'gpt-4o-mini':                    { input: 0.15,  output: 0.60  },
+  'o3':                             { input: 2.00,  output: 8.00  },
+  'o3-mini':                        { input: 1.10,  output: 4.40  },
+  'o4-mini':                        { input: 1.10,  output: 4.40  },
+};
+
+// Session-level usage accumulators
+let sessionUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  estimatedCost: 0,
+  messageCount: 0,
+};
+
+function getPricing(model) {
+  if (MODEL_PRICING[model]) return MODEL_PRICING[model];
+  // Fallback: try prefix match
+  for (const [key, pricing] of Object.entries(MODEL_PRICING)) {
+    if (model.startsWith(key)) return pricing;
+  }
+  // Default fallback
+  return { input: 3.00, output: 15.00 };
+}
+
+function estimateCost(inputTokens, outputTokens, model) {
+  const pricing = getPricing(model);
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+}
+
+function formatTokens(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+  return String(n);
+}
+
+function updateUsageDisplay() {
+  const bar = document.getElementById('usage-bar');
+  if (sessionUsage.messageCount === 0) {
+    bar.classList.add('hidden');
+    return;
+  }
+  bar.classList.remove('hidden');
+
+  const tokensEl = document.getElementById('usage-tokens');
+  const costEl = document.getElementById('usage-cost');
+
+  const totalTokens = sessionUsage.inputTokens + sessionUsage.outputTokens;
+  tokensEl.innerHTML =
+    `<span class="font-mono">${formatTokens(totalTokens)}</span> tokens ` +
+    `<span class="text-gray-300">(${formatTokens(sessionUsage.inputTokens)} in / ${formatTokens(sessionUsage.outputTokens)} out)</span>`;
+
+  const costStr = sessionUsage.estimatedCost < 0.01
+    ? '< $0.01'
+    : '$' + sessionUsage.estimatedCost.toFixed(4);
+  costEl.innerHTML = `<span class="font-semibold text-gray-500">${costStr}</span> est. session cost`;
+}
+
+function handleUsageEvent(data) {
+  // data: { input_tokens, output_tokens, model, provider, cache_creation_tokens?, cache_read_tokens? }
+  // These are cumulative per-message totals from the backend
+  // Store the latest per-message totals temporarily
+  const msgInputTokens = data.input_tokens || 0;
+  const msgOutputTokens = data.output_tokens || 0;
+
+  // We store per-message deltas: the backend sends running totals per request,
+  // so we track "last seen" values per message to avoid double-counting tool rounds
+  if (!handleUsageEvent._msgInput) handleUsageEvent._msgInput = 0;
+  if (!handleUsageEvent._msgOutput) handleUsageEvent._msgOutput = 0;
+
+  const inputDelta = msgInputTokens - handleUsageEvent._msgInput;
+  const outputDelta = msgOutputTokens - handleUsageEvent._msgOutput;
+  handleUsageEvent._msgInput = msgInputTokens;
+  handleUsageEvent._msgOutput = msgOutputTokens;
+
+  sessionUsage.inputTokens += Math.max(0, inputDelta);
+  sessionUsage.outputTokens += Math.max(0, outputDelta);
+  sessionUsage.estimatedCost = estimateCost(
+    sessionUsage.inputTokens,
+    sessionUsage.outputTokens,
+    data.model || getModel()
+  );
+
+  updateUsageDisplay();
+}
+
+function resetMessageUsageTracking() {
+  // Reset per-message cumulative tracker before each new message
+  handleUsageEvent._msgInput = 0;
+  handleUsageEvent._msgOutput = 0;
+}
+
+function resetUsage() {
+  sessionUsage = { inputTokens: 0, outputTokens: 0, estimatedCost: 0, messageCount: 0 };
+  updateUsageDisplay();
+}
 
 // =============================================
 // API Key Management
@@ -566,6 +686,10 @@ async function sendMessage() {
   isStreaming = true;
   document.getElementById('send-btn').disabled = true;
 
+  // Reset per-message usage tracking
+  resetMessageUsageTracking();
+  sessionUsage.messageCount += 1;
+
   let assistantText = '';
   let typingRemoved = false;
 
@@ -647,6 +771,9 @@ async function sendMessage() {
           ti.textContent = 'Thinking...';
           bubble.appendChild(ti);
           typingRemoved = false;
+        }
+        else if (data.type === 'usage') {
+          handleUsageEvent(data);
         }
         else if (data.type === 'done') {
           // Remove any remaining typing indicator
