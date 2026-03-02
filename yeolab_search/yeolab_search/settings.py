@@ -174,7 +174,7 @@ SOCIAL_AUTH_PIPELINE = (
     'social_core.pipeline.social_auth.load_extra_data',
     'social_core.pipeline.user.user_details',
 )
-
+'''
 # ---------------------------------------------------------------------------
 # Production security (only when DEBUG is False)
 # ---------------------------------------------------------------------------
@@ -191,3 +191,4 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+'''
