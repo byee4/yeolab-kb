@@ -12,7 +12,8 @@ from django.contrib.auth.decorators import login_required
 from .models import (
     Publication, Author, PublicationAuthor, DatasetAccession,
     PublicationDataset, DatasetFile, Grant, PublicationGrant,
-    SraExperiment, SraRun,
+    SraExperiment, SraRun, ComputationalMethod, PublicationMethod,
+    AnalysisPipeline, PipelineStep,
 )
 
 
@@ -175,6 +176,14 @@ def publication_detail(request, pmid):
     for f in files:
         files_by_acc.setdefault(f.accession_id, []).append(f)
 
+    # Get analysis pipelines for this publication
+    pipelines = (
+        AnalysisPipeline.objects.filter(pmid=pmid)
+        .annotate(step_count=Count("pipelinestep"))
+        .select_related("accession")
+        .order_by("pipeline_title")
+    )
+
     ctx = {
         "pub": pub,
         "authors": authors,
@@ -182,6 +191,7 @@ def publication_detail(request, pmid):
         "potential_datasets": potential_datasets,
         "grants": grants,
         "files_by_acc": files_by_acc,
+        "pipelines": pipelines,
     }
     return render(request, "publications/detail.html", ctx)
 
@@ -333,6 +343,7 @@ def _parse_json_field(value):
 def dataset_detail(request, accession_id):
     """Detail view for a single dataset accession."""
     dataset = get_object_or_404(DatasetAccession, accession_id=accession_id)
+    from .code_examples import get_steps_for_dataset, generate_pipeline_from_metadata
 
     pub_links = (
         PublicationDataset.objects.filter(accession=dataset)
@@ -613,8 +624,16 @@ def dataset_detail(request, accession_id):
         encode_output_types.items(), key=lambda item: (-item[1], item[0].lower())
     )
 
+    analysis_accession = (dataset.accession or "").strip()
+    analysis_steps = get_steps_for_dataset(analysis_accession) or []
+    if not analysis_steps and analysis_accession:
+        generated = generate_pipeline_from_metadata(analysis_accession) or {}
+        analysis_steps = generated.get("steps", []) if isinstance(generated, dict) else []
+
     return render(request, "publications/dataset_detail.html", {
         "dataset": dataset,
+        "analysis_accession": analysis_accession,
+        "analysis_steps": analysis_steps,
         "is_encode": is_encode,
         "encode_portal_url": encode_portal_url,
         "publications": publications,
@@ -1200,6 +1219,84 @@ def api_authors(request):
 
 
 # ============================================================
+# Computational Methods browsing
+# ============================================================
+
+def method_list(request):
+    """Browse computational methods with filters."""
+    page_num = request.GET.get("page", 1)
+    q = request.GET.get("q", "").strip()
+    category = request.GET.get("category", "")
+
+    methods = ComputationalMethod.objects.annotate(
+        pub_count=Count("publicationmethod")
+    )
+
+    if q:
+        methods = methods.filter(
+            Q(canonical_name__icontains=q) | Q(category__icontains=q)
+        )
+    if category:
+        methods = methods.filter(category=category)
+
+    methods = methods.order_by("-pub_count", "canonical_name")
+
+    paginator = Paginator(methods, 30)
+    page = paginator.get_page(page_num)
+
+    # Get category counts for sidebar filter
+    categories = (
+        ComputationalMethod.objects.values("category")
+        .annotate(count=Count("method_id"))
+        .order_by("-count")
+    )
+
+    return render(request, "publications/method_list.html", {
+        "page": page, "q": q, "category": category,
+        "categories": categories, "total": paginator.count,
+    })
+
+
+def method_detail(request, method_id):
+    """Detail page for a single computational method."""
+    method = get_object_or_404(ComputationalMethod, method_id=method_id)
+
+    # Get all publication links with source info
+    links = PublicationMethod.objects.filter(
+        method=method
+    ).select_related("pmid").order_by("-pmid__pub_year", "pmid__pmid")
+
+    # Group by publication for cleaner display
+    pub_map = {}
+    for link in links:
+        pmid = link.pmid_id
+        if pmid not in pub_map:
+            pub_map[pmid] = {
+                "publication": link.pmid,
+                "sources": [],
+                "version": None,
+            }
+        pub_map[pmid]["sources"].append(link.source_type)
+        if link.version:
+            pub_map[pmid]["version"] = link.version
+
+    publications = sorted(pub_map.values(),
+                          key=lambda x: x["publication"].pub_year or 0, reverse=True)
+
+    # Source breakdown
+    source_counts = defaultdict(int)
+    for link in links:
+        source_counts[link.source_type] += 1
+
+    return render(request, "publications/method_detail.html", {
+        "method": method,
+        "publications": publications,
+        "source_counts": dict(source_counts),
+        "total_pubs": len(pub_map),
+    })
+
+
+# ============================================================
 # Admin panel & PMID submission
 # ============================================================
 
@@ -1236,11 +1333,17 @@ def admin_start_update(request):
     from . import services
 
     mode = request.POST.get("mode", "full")
-    if mode not in ("full", "pubmed", "geo", "encode"):
+    if mode not in ("full", "pubmed", "geo", "encode", "methods", "analysis", "pipelines"):
         return JsonResponse({"error": "Invalid mode"}, status=400)
 
     try:
-        started = services.start_full_update(mode=mode)
+        if mode == "methods":
+            started = services.start_methods_update()
+        elif mode in ("analysis", "pipelines"):
+            started = services.start_pipeline_update()
+            mode = "analysis"
+        else:
+            started = services.start_full_update(mode=mode)
         if started:
             return JsonResponse({"ok": True, "message": f"Started {mode} update"})
         else:
@@ -1325,6 +1428,258 @@ def admin_confirm_remove(request):
 
 
 @login_required
+def admin_code_editor(request):
+    """Dataset browser + JSON editor page."""
+    import os
+    from publications.code_examples import list_datasets_with_paths
+    from publications.github_sync import get_pat_status
+
+    pat_status = get_pat_status()
+    datasets = list_datasets_with_paths()
+
+    return render(request, "publications/code_editor.html", {
+        "datasets_json": json.dumps(datasets),
+        "dataset_count": len(datasets),
+        "pat_configured": pat_status["configured"],
+        "pat_valid": pat_status["valid"],
+        "github_repo": pat_status["repo"],
+        "github_branch": pat_status["branch"],
+    })
+
+
+@login_required
+@require_GET
+def admin_code_editor_datasets(request):
+    """JSON API: list all dataset accessions with paths (for AJAX search)."""
+    from publications.code_examples import list_datasets_with_paths
+    return JsonResponse({"ok": True, "datasets": list_datasets_with_paths()})
+
+
+@login_required
+@require_GET
+def admin_code_editor_dataset_content(request, accession):
+    """JSON API: return one dataset's JSON content + path + raw_text."""
+    from publications.code_examples import get_dataset_content, get_dataset_rel_path, get_dataset_raw_text
+    content = get_dataset_content(accession)
+    if content is None:
+        return JsonResponse({"ok": False, "error": f"Dataset {accession} not found"}, status=404)
+    # Ensure legacy files expose default lock policy in the editor payload.
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict) and "locked" not in parsed:
+            parsed["locked"] = True
+            content = json.dumps(parsed, indent=2)
+    except Exception:
+        pass
+    # Get raw_text from the registry (separate from the editable JSON content)
+    raw_text = get_dataset_raw_text(accession)
+    # Also get raw_text_source
+    from publications.code_examples import get_registry
+    registry = get_registry()
+    entry = registry.get(accession, {})
+    raw_text_source = entry.get("raw_text_source", "")
+    return JsonResponse({
+        "ok": True,
+        "accession": accession,
+        "content": content,
+        "path": get_dataset_rel_path(accession) or "",
+        "raw_text": raw_text or "",
+        "raw_text_source": raw_text_source,
+    })
+
+
+@login_required
+@require_GET
+def admin_code_editor_lookup_date(request, accession):
+    """JSON API: look up publication date for an accession (for new dataset creation)."""
+    from publications.code_examples import lookup_pub_date, month_abbr
+    year, month = lookup_pub_date(accession)
+    if year is None:
+        return JsonResponse({"ok": False, "error": f"No publication found for {accession}"})
+    return JsonResponse({
+        "ok": True,
+        "accession": accession,
+        "year": year,
+        "month": month,
+        "month_abbr": month_abbr(month) if month else "Unknown",
+    })
+
+
+@login_required
+@require_POST
+@csrf_protect
+def admin_code_editor_fetch(request):
+    """Fetch one dataset from GitHub."""
+    accession = request.POST.get("accession", "").strip()
+    rel_path = request.POST.get("path", "").strip()
+    if not accession:
+        return JsonResponse({"ok": False, "error": "No accession provided"}, status=400)
+
+    try:
+        from publications.code_examples import get_dataset_rel_path
+        from publications.github_sync import fetch_dataset
+        if not rel_path:
+            rel_path = get_dataset_rel_path(accession) or ""
+        content, sha = fetch_dataset(accession, rel_path=rel_path or None)
+        return JsonResponse({
+            "ok": True,
+            "accession": accession,
+            "content": content,
+            "sha": sha,
+            "path": rel_path,
+        })
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": str(e)}, status=500)
+
+
+@login_required
+@require_POST
+@csrf_protect
+def admin_code_editor_save(request):
+    """Save one dataset file locally."""
+    accession = request.POST.get("accession", "").strip()
+    content = request.POST.get("content", "")
+    year = request.POST.get("year", "").strip()
+    month = request.POST.get("month", "").strip()
+    if not accession:
+        return JsonResponse({"ok": False, "error": "No accession provided"}, status=400)
+    if not content:
+        return JsonResponse({"ok": False, "error": "No content provided"}, status=400)
+
+    try:
+        from publications.code_examples import save_dataset_content
+        kwargs = {}
+        if year:
+            kwargs["year"] = int(year)
+        if month:
+            kwargs["month"] = month
+        path = save_dataset_content(accession, content, **kwargs)
+        return JsonResponse({"ok": True, "accession": accession, "path": path})
+    except ValueError as e:
+        return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+
+@login_required
+@require_POST
+@csrf_protect
+def admin_code_editor_push(request):
+    """Save one dataset locally and push to GitHub."""
+    accession = request.POST.get("accession", "").strip()
+    content = request.POST.get("content", "")
+    if not accession:
+        return JsonResponse({"ok": False, "error": "No accession provided"}, status=400)
+    if not content:
+        return JsonResponse({"ok": False, "error": "No content provided"}, status=400)
+
+    # Save locally first
+    try:
+        from publications.code_examples import save_dataset_content
+        path = save_dataset_content(accession, content)
+    except ValueError as e:
+        return JsonResponse({"ok": False, "error": f"Validation failed: {e}"}, status=400)
+
+    # Push to GitHub (using the rel_path from the registry)
+    try:
+        from publications.github_sync import push_dataset
+        from publications.code_examples import get_dataset_rel_path
+        rel_path = get_dataset_rel_path(accession)
+        result = push_dataset(accession, content, rel_path=rel_path)
+        return JsonResponse({
+            "ok": True,
+            "accession": accession,
+            "path": path,
+            "commit_sha": result.get("commit_sha", ""),
+            "html_url": result.get("html_url", ""),
+        })
+    except RuntimeError as e:
+        return JsonResponse({
+            "ok": False,
+            "error": f"Saved locally but GitHub push failed: {e}",
+            "path": path,
+        }, status=500)
+
+
+@login_required
+@require_POST
+@csrf_protect
+def admin_code_editor_delete(request):
+    """Delete one dataset file locally (and optionally from GitHub)."""
+    accession = request.POST.get("accession", "").strip()
+    if not accession:
+        return JsonResponse({"ok": False, "error": "No accession provided"}, status=400)
+
+    from publications.code_examples import delete_dataset
+    deleted = delete_dataset(accession)
+    if not deleted:
+        return JsonResponse({"ok": False, "error": f"Dataset {accession} not found locally"}, status=404)
+
+    # Optionally delete from GitHub too
+    delete_remote = request.POST.get("delete_remote") == "1"
+    remote_result = None
+    if delete_remote:
+        try:
+            from publications.github_sync import delete_remote_dataset
+            from publications.code_examples import get_dataset_rel_path
+            rel_path = get_dataset_rel_path(accession)
+            remote_result = delete_remote_dataset(accession, rel_path=rel_path)
+        except Exception as e:
+            return JsonResponse({
+                "ok": True,
+                "accession": accession,
+                "deleted_local": True,
+                "deleted_remote": False,
+                "remote_error": str(e),
+            })
+
+    return JsonResponse({
+        "ok": True,
+        "accession": accession,
+        "deleted_local": True,
+        "deleted_remote": bool(remote_result),
+    })
+
+
+
+@login_required
+@require_POST
+@csrf_protect
+def admin_sync_code_examples(request):
+    """Sync code examples from GitHub and optionally backfill."""
+    import io
+    from django.core.management import call_command
+
+    backfill = request.POST.get("backfill") == "1"
+    force = request.POST.get("force") == "1"
+
+    out = io.StringIO()
+    err = io.StringIO()
+
+    try:
+        kwargs = {"stdout": out, "stderr": err}
+        if backfill:
+            kwargs["backfill"] = True
+        if force:
+            kwargs["force"] = True
+        call_command("sync_code_examples", **kwargs)
+
+        output = out.getvalue()
+        errors = err.getvalue()
+
+        return JsonResponse({
+            "ok": True,
+            "output": output,
+            "errors": errors if errors else None,
+        })
+    except Exception as e:
+        return JsonResponse({
+            "ok": False,
+            "message": str(e),
+            "output": out.getvalue(),
+            "errors": err.getvalue(),
+        }, status=500)
+
+
+@login_required
 @require_POST
 @csrf_protect
 def api_submit_pmid(request):
@@ -1404,6 +1759,21 @@ def api_stats(request):
     })
 
 
+@require_GET
+def healthz(request):
+    """Liveness/readiness endpoint with DB connectivity check."""
+    try:
+        with connection.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return JsonResponse({"status": "ok", "db": "ok"})
+    except Exception as exc:
+        return JsonResponse(
+            {"status": "error", "db": "down", "error": str(exc)},
+            status=503,
+        )
+
+
 # ============================================================
 # Chat views
 # ============================================================
@@ -1473,3 +1843,414 @@ def chat_message(request):
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
+
+
+# ============================================================
+# Analysis Pipelines
+# ============================================================
+
+def _build_code_example_pipelines():
+    """
+    Build pipeline-like data structures from the code_examples JSON registry
+    AND from DB metadata for GSE datasets not yet in the registry.
+    Returns a list of dicts that mirror AnalysisPipeline + steps for templates.
+    """
+    from .code_examples import get_registry, get_dataset_rel_path, generate_pipeline_from_metadata
+
+    registry = dict(get_registry())  # copy so we don't mutate the original
+
+    # Also discover GSE datasets in DB that aren't in registry yet
+    try:
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT da.accession FROM dataset_accessions da
+                JOIN publication_datasets pd ON da.accession_id = pd.accession_id
+                WHERE da.accession_type = 'GSE'
+            """)
+            all_gse = [row[0] for row in cur.fetchall()]
+            missing = [acc for acc in all_gse if acc not in registry]
+    except Exception:
+        missing = []
+
+    # Generate pipelines for missing datasets on the fly
+    for acc in missing:
+        pipeline_data = generate_pipeline_from_metadata(acc)
+        if pipeline_data and pipeline_data.get("steps"):
+            registry[acc] = pipeline_data
+
+    if not registry:
+        return []
+
+    # Lookup dataset info from DB in one query
+    accessions = list(registry.keys())
+    accession_info = {}
+    try:
+        with connection.cursor() as cur:
+            placeholders = ",".join(["%s"] * len(accessions))
+            cur.execute(f"""
+                SELECT da.accession, da.accession_id, da.title, da.accession_type,
+                       p.pmid, p.title, p.pub_year, p.pub_month, p.journal_name
+                FROM dataset_accessions da
+                LEFT JOIN publication_datasets pd ON da.accession_id = pd.accession_id
+                LEFT JOIN publications p ON pd.pmid = p.pmid
+                WHERE da.accession IN ({placeholders})
+                ORDER BY p.pub_year ASC
+            """, accessions)
+            for row in cur.fetchall():
+                acc = row[0]
+                if acc not in accession_info:
+                    accession_info[acc] = {
+                        "accession": acc,
+                        "accession_id": row[1],
+                        "acc_title": row[2],
+                        "accession_type": row[3],
+                        "pmid": row[4],
+                        "pub_title": row[5],
+                        "pub_year": row[6],
+                        "pub_month": row[7],
+                        "journal_name": row[8],
+                    }
+
+            # Lookup dominant library_strategy per accession from SRA
+            cur.execute(f"""
+                SELECT da.accession, se.library_strategy, COUNT(*) as cnt
+                FROM dataset_accessions da
+                JOIN sra_experiments se ON da.accession_id = se.parent_accession_id
+                WHERE da.accession IN ({placeholders})
+                  AND se.library_strategy IS NOT NULL
+                GROUP BY da.accession, se.library_strategy
+                ORDER BY da.accession, cnt DESC
+            """, accessions)
+            strategy_map = {}
+            for row in cur.fetchall():
+                acc = row[0]
+                if acc not in strategy_map:  # first row per accession is the dominant one
+                    strategy_map[acc] = row[1]
+
+            for acc, info in accession_info.items():
+                info["library_strategy"] = strategy_map.get(acc, "")
+    except Exception:
+        pass
+
+    # Lookup method IDs for tool names
+    method_ids = {}
+    try:
+        with connection.cursor() as cur:
+            cur.execute("SELECT method_id, canonical_name FROM computational_methods")
+            for row in cur.fetchall():
+                method_ids[row[1].lower()] = {"method_id": row[0], "canonical_name": row[1]}
+    except Exception:
+        pass
+
+    pipelines = []
+    for acc, data in sorted(registry.items()):
+        steps = data.get("steps", [])
+        if not steps:
+            continue
+
+        info = accession_info.get(acc, {})
+        rel_path = get_dataset_rel_path(acc) or ""
+
+        pipeline = {
+            "id": acc,  # Use accession as pipeline ID
+            "pipeline_title": f"{acc} Processing Pipeline",
+            "accession": acc,
+            "accession_id": info.get("accession_id"),
+            "acc_title": info.get("acc_title", ""),
+            "pmid_id": info.get("pmid", ""),
+            "pub_title": info.get("pub_title", ""),
+            "pub_year": info.get("pub_year"),
+            "journal_name": info.get("journal_name", ""),
+            "source": "code_examples",
+            "assay_type": info.get("library_strategy") or info.get("accession_type", ""),
+            "step_count": len(steps),
+            "rel_path": rel_path,
+            "steps": [],
+            "tools_used": [],
+        }
+
+        seen_tools = set()
+        for step in steps:
+            tool_name = step.get("tool_name", "")
+            tool_lower = tool_name.lower() if tool_name else ""
+            method_info = method_ids.get(tool_lower, {})
+
+            step_data = {
+                "step_order": step.get("step_order", 0),
+                "description": step.get("description", tool_name),
+                "tool_name": tool_name,
+                "tool_version": step.get("tool_version", ""),
+                "code_example": step.get("code_example", ""),
+                "code_language": step.get("code_language", ""),
+                "github_url": step.get("github_url", ""),
+                "method_id": method_info.get("method_id"),
+                "method_name": method_info.get("canonical_name"),
+            }
+            pipeline["steps"].append(step_data)
+
+            if method_info and tool_lower not in seen_tools:
+                seen_tools.add(tool_lower)
+                pipeline["tools_used"].append(method_info)
+
+        pipelines.append(pipeline)
+
+    return pipelines
+
+
+def analysis_list(request):
+    """Browse analysis pipelines — merges DB pipelines with code_examples registry."""
+    page_num = request.GET.get("page", 1)
+    q = request.GET.get("q", "").strip()
+    assay = request.GET.get("assay", "")
+    source = request.GET.get("source", "")
+
+    # Try DB-backed pipelines first
+    db_pipelines = list(
+        AnalysisPipeline.objects.annotate(
+            step_count=Count("pipelinestep")
+        ).select_related("pmid", "accession").order_by("-pmid__pub_year", "pipeline_title")
+    )
+
+    # Build code_examples-backed pipelines
+    ce_pipelines = _build_code_example_pipelines()
+    ce_by_accession = {
+        p.get("accession"): p for p in ce_pipelines if p.get("accession")
+    }
+
+    # Merge with override semantics:
+    # If a dataset has code_examples JSON, prefer it over DB pipeline rows.
+    all_items = []
+
+    for p in db_pipelines:
+        db_acc = p.accession.accession if p.accession else ""
+        if db_acc and db_acc in ce_by_accession:
+            continue
+        all_items.append({
+            "id": p.pipeline_id,
+            "is_db": True,
+            "pipeline_title": p.pipeline_title or "Analysis Pipeline",
+            "accession": db_acc,
+            "accession_id": p.accession.accession_id if p.accession else None,
+            "pmid_id": p.pmid_id,
+            "pub_title": p.pmid.title if p.pmid else "",
+            "pub_year": p.pmid.pub_year if p.pmid else None,
+            "source": p.source,
+            "assay_type": p.assay_type or "",
+            "step_count": p.step_count,
+        })
+
+    for p in ce_pipelines:
+        all_items.append({
+            "id": p["id"],
+            "is_db": False,
+            "pipeline_title": p["pipeline_title"],
+            "accession": p["accession"],
+            "accession_id": p["accession_id"],
+            "pmid_id": p["pmid_id"],
+            "pub_title": p["pub_title"],
+            "pub_year": p["pub_year"],
+            "source": p["source"],
+            "assay_type": p["assay_type"],
+            "step_count": p["step_count"],
+        })
+
+    # Apply filters
+    if q:
+        q_lower = q.lower()
+        all_items = [
+            item for item in all_items
+            if q_lower in (item.get("pipeline_title") or "").lower()
+            or q_lower in (item.get("pub_title") or "").lower()
+            or q_lower in (item.get("accession") or "").lower()
+        ]
+    if assay:
+        all_items = [item for item in all_items if item.get("assay_type") == assay]
+    if source:
+        all_items = [item for item in all_items if item.get("source") == source]
+
+    # Sort by year descending
+    all_items.sort(key=lambda x: (-(x.get("pub_year") or 0), x.get("pipeline_title") or ""))
+
+    # Compute filter options from unfiltered merged list
+    all_unfiltered = []
+    for p in db_pipelines:
+        db_acc = p.accession.accession if p.accession else ""
+        if db_acc and db_acc in ce_by_accession:
+            continue
+        all_unfiltered.append({"assay_type": p.assay_type or "", "source": p.source})
+    for p in ce_pipelines:
+        all_unfiltered.append({"assay_type": p["assay_type"], "source": p["source"]})
+
+    assay_counts = defaultdict(int)
+    source_counts_dict = defaultdict(int)
+    for item in all_unfiltered:
+        if item["assay_type"]:
+            assay_counts[item["assay_type"]] += 1
+        source_counts_dict[item["source"]] += 1
+
+    assay_types = sorted(
+        [{"assay_type": k, "count": v} for k, v in assay_counts.items()],
+        key=lambda x: -x["count"]
+    )
+    source_counts = sorted(
+        [{"source": k, "count": v} for k, v in source_counts_dict.items()],
+        key=lambda x: -x["count"]
+    )
+
+    paginator = Paginator(all_items, 20)
+    page = paginator.get_page(page_num)
+
+    return render(request, "publications/pipeline_list.html", {
+        "page": page, "q": q, "assay": assay, "source": source,
+        "assay_types": assay_types, "source_counts": source_counts,
+        "total": paginator.count,
+    })
+
+
+def analysis_detail(request, pipeline_id):
+    """Detail page for a single analysis pipeline with ordered steps."""
+    # Try DB first
+    try:
+        pipeline = (
+            AnalysisPipeline.objects.select_related("pmid", "accession")
+            .get(pipeline_id=pipeline_id)
+        )
+        # Override semantics: if a curated code_examples JSON exists for this
+        # accession, always use it as the canonical processing-steps view.
+        if pipeline.accession:
+            from .code_examples import get_steps_for_dataset
+            from django.shortcuts import redirect
+            accession = pipeline.accession.accession
+            if get_steps_for_dataset(accession) is not None:
+                return redirect("publications:analysis_detail_by_accession", accession=accession)
+
+        steps = PipelineStep.objects.filter(
+            pipeline=pipeline
+        ).select_related("method").order_by("step_order")
+
+        tools_used = steps.exclude(method__isnull=True).values(
+            "method__canonical_name", "method__method_id"
+        ).distinct()
+
+        return render(request, "publications/pipeline_detail.html", {
+            "pipeline": pipeline,
+            "steps": steps,
+            "tools_used": tools_used,
+        })
+    except (AnalysisPipeline.DoesNotExist, ValueError):
+        pass
+
+    # Fall through: pipeline_id might be an accession from code_examples
+    # (handled by the new accession-based URL)
+    from django.http import Http404
+    raise Http404("Pipeline not found")
+
+
+def analysis_detail_by_accession(request, accession):
+    """Detail page for a code_examples-backed pipeline, keyed by accession."""
+    from .code_examples import get_steps_for_dataset, get_dataset_rel_path, generate_pipeline_from_metadata, get_dataset_raw_text
+
+    steps = get_steps_for_dataset(accession)
+    if steps is None:
+        # Dynamic fallback: generate from DB metadata
+        pipeline_data = generate_pipeline_from_metadata(accession)
+        if pipeline_data and pipeline_data.get("steps"):
+            steps = pipeline_data["steps"]
+        else:
+            from django.http import Http404
+            raise Http404(f"No code examples found for {accession}")
+
+    # Lookup DB info for this accession
+    pub_info = {}
+    acc_info = {}
+    method_ids = {}
+    try:
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT da.accession_id, da.title, da.accession_type
+                FROM dataset_accessions da WHERE da.accession = %s
+            """, [accession])
+            row = cur.fetchone()
+            accession_id = None
+            if row:
+                accession_id = row[0]
+                acc_info = {"accession_id": row[0], "title": row[1], "type": row[2]}
+
+            # Get library_strategy from SRA experiments
+            if accession_id:
+                cur.execute("""
+                    SELECT library_strategy, COUNT(*) as cnt
+                    FROM sra_experiments WHERE parent_accession_id = %s
+                    AND library_strategy IS NOT NULL
+                    GROUP BY library_strategy ORDER BY cnt DESC LIMIT 1
+                """, [accession_id])
+                strat_row = cur.fetchone()
+                if strat_row:
+                    acc_info["library_strategy"] = strat_row[0]
+
+            cur.execute("""
+                SELECT p.pmid, p.title, p.pub_year, p.pub_month, p.journal_name
+                FROM publications p
+                JOIN publication_datasets pd ON p.pmid = pd.pmid
+                JOIN dataset_accessions da ON pd.accession_id = da.accession_id
+                WHERE da.accession = %s
+                ORDER BY p.pub_year ASC LIMIT 1
+            """, [accession])
+            row = cur.fetchone()
+            if row:
+                pub_info = {
+                    "pmid": row[0], "title": row[1], "pub_year": row[2],
+                    "pub_month": row[3], "journal_name": row[4],
+                }
+
+            cur.execute("SELECT method_id, canonical_name FROM computational_methods")
+            for row in cur.fetchall():
+                method_ids[row[1].lower()] = {"method_id": row[0], "canonical_name": row[1]}
+    except Exception:
+        pass
+
+    # Build step data
+    step_list = []
+    tools_used = []
+    seen_tools = set()
+    for step in steps:
+        tool_name = step.get("tool_name", "")
+        tool_lower = tool_name.lower() if tool_name else ""
+        method_info = method_ids.get(tool_lower, {})
+
+        step_list.append({
+            "step_order": step.get("step_order", 0),
+            "description": step.get("description", tool_name),
+            "tool_name": tool_name,
+            "tool_version": step.get("tool_version", ""),
+            "code_example": step.get("code_example", ""),
+            "code_language": step.get("code_language", ""),
+            "github_url": step.get("github_url", ""),
+            "method": method_info if method_info else None,
+            "step_id": f"{accession}-{step.get('step_order', 0)}",
+        })
+
+        if method_info and tool_lower not in seen_tools:
+            seen_tools.add(tool_lower)
+            tools_used.append({
+                "method__canonical_name": method_info["canonical_name"],
+                "method__method_id": method_info["method_id"],
+            })
+
+    # Build pipeline-like context object
+    pipeline = {
+        "pipeline_title": f"{accession} Processing Pipeline",
+        "assay_type": acc_info.get("library_strategy") or acc_info.get("type", ""),
+        "source": "code_examples",
+        "pmid_id": pub_info.get("pmid", ""),
+        "pmid": pub_info if pub_info else None,
+        "accession": acc_info if acc_info else None,
+        "raw_text": get_dataset_raw_text(accession),
+    }
+
+    return render(request, "publications/pipeline_detail_ce.html", {
+        "pipeline": pipeline,
+        "steps": step_list,
+        "tools_used": tools_used,
+        "accession": accession,
+    })

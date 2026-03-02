@@ -8,8 +8,14 @@ import os
 from pathlib import Path
 
 import dj_database_url
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env file from project root (two levels up from settings.py)
+_dotenv_path = BASE_DIR.parent / '.env'
+if _dotenv_path.is_file():
+    load_dotenv(_dotenv_path)
 
 # ---------------------------------------------------------------------------
 # Security
@@ -88,6 +94,8 @@ if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600),
     }
+    # Avoid serving requests with stale pooled connections after DB restarts.
+    DATABASES['default']['CONN_HEALTH_CHECKS'] = True
 else:
     DATABASES = {
         'default': {

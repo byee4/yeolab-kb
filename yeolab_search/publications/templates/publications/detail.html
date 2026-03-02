@@ -201,4 +201,36 @@
   {% endfor %}
 </div>
 {% endif %}
+
+<!-- Analysis Pipelines -->
+{% if pipelines %}
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+    Analysis Pipelines ({{ pipelines|length }})
+  </h2>
+  <div class="space-y-3">
+    {% for p in pipelines %}
+    <div class="border border-gray-100 rounded p-3">
+      <div class="flex items-start justify-between">
+        <a href="{% url 'publications:analysis_detail' p.pipeline_id %}"
+           class="text-sm font-medium text-ucsd-sky hover:underline">
+          {{ p.pipeline_title|default:"Analysis Pipeline" }}
+        </a>
+        <span class="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{{ p.step_count }} step{{ p.step_count|pluralize }}</span>
+      </div>
+      <div class="flex flex-wrap gap-1.5 mt-1">
+        {% if p.assay_type %}
+        <span class="text-xs bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded">{{ p.assay_type }}</span>
+        {% endif %}
+        <span class="text-xs bg-gray-50 text-gray-500 px-1.5 py-0.5 rounded">{{ p.source }}</span>
+        {% if p.accession %}
+        <a href="{% url 'publications:dataset_detail' p.accession.accession_id %}"
+           class="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded hover:bg-blue-100">{{ p.accession.accession }}</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 {% endblock %}

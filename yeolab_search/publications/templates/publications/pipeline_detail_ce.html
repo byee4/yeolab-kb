@@ -1,0 +1,184 @@
+{% extends "publications/base.html" %}
+{% block title %}{{ pipeline.pipeline_title|default:"Pipeline" }} — Yeo Lab Publications{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-xl font-bold text-ucsd-blue">{{ pipeline.pipeline_title|default:"Analysis Pipeline" }}</h1>
+  <div class="flex flex-wrap gap-2 mt-2">
+    {% if pipeline.assay_type %}
+    <span class="text-xs bg-teal-50 text-teal-700 px-2 py-0.5 rounded font-medium">{{ pipeline.assay_type }}</span>
+    {% endif %}
+    <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{{ pipeline.source }}</span>
+    <span class="text-xs text-gray-400">{{ steps|length }} step{{ steps|length|pluralize }}</span>
+  </div>
+</div>
+
+<!-- Publication -->
+{% if pipeline.pmid %}
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-4">
+  <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Publication</h2>
+  <a href="{% url 'publications:publication_detail' pipeline.pmid_id %}"
+     class="text-sm font-medium text-ucsd-sky hover:underline">
+    {{ pipeline.pmid.title }}
+  </a>
+  <p class="text-xs text-gray-500 mt-1">
+    {{ pipeline.pmid.journal_name }}{% if pipeline.pmid.pub_year %} ({{ pipeline.pmid.pub_year }}){% endif %}
+    — PMID {{ pipeline.pmid_id }}
+  </p>
+</div>
+{% endif %}
+
+<!-- Linked Dataset -->
+{% if pipeline.accession %}
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-4">
+  <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Dataset</h2>
+  {% if pipeline.accession.accession_id %}
+  <a href="{% url 'publications:dataset_detail' pipeline.accession.accession_id %}"
+     class="text-sm font-medium text-ucsd-sky hover:underline">
+    {{ accession }}
+  </a>
+  {% else %}
+  <span class="text-sm font-medium text-gray-700">{{ accession }}</span>
+  {% endif %}
+  {% if pipeline.accession.title %}
+  <p class="text-xs text-gray-500 mt-1">{{ pipeline.accession.title|truncatechars:150 }}</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Pipeline Steps -->
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-4">
+  <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Processing Steps</h2>
+  <ol class="space-y-4">
+    {% for step in steps %}
+    <li class="flex gap-3">
+      <span class="flex-shrink-0 w-6 h-6 rounded-full bg-ucsd-sky text-white text-xs font-bold flex items-center justify-center mt-0.5">
+        {{ step.step_order }}
+      </span>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm text-gray-800 leading-relaxed">{{ step.description }}</p>
+
+        <!-- Tool badges + GitHub link -->
+        <div class="flex flex-wrap items-center gap-1.5 mt-1">
+          {% if step.tool_name %}
+          <span class="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+            {% if step.method %}
+            <a href="{% url 'publications:method_detail' step.method.method_id %}" class="hover:underline">
+              {{ step.tool_name }}
+            </a>
+            {% else %}
+            {{ step.tool_name }}
+            {% endif %}
+          </span>
+          {% endif %}
+          {% if step.tool_version %}
+          <span class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">v{{ step.tool_version }}</span>
+          {% endif %}
+          {% if step.github_url %}
+          <a href="{{ step.github_url }}" target="_blank" rel="noopener"
+             class="inline-flex items-center gap-0.5 text-xs text-gray-400 hover:text-gray-600 transition"
+             title="View source / documentation">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/>
+            </svg>
+            GitHub
+          </a>
+          {% endif %}
+        </div>
+
+        <!-- Code Example (collapsible) -->
+        {% if step.code_example %}
+        <details class="mt-2 rounded border border-gray-200 bg-gray-50 group">
+          <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer text-xs font-medium text-gray-600 hover:text-gray-800 select-none">
+            {% if step.code_language == "python" %}
+            <span class="inline-block w-4 h-4 rounded bg-blue-500 text-white text-[9px] font-bold leading-4 text-center flex-shrink-0">Py</span>
+            <span>Python example</span>
+            {% elif step.code_language == "r" %}
+            <span class="inline-block w-4 h-4 rounded bg-indigo-500 text-white text-[9px] font-bold leading-4 text-center flex-shrink-0">R</span>
+            <span>R example</span>
+            {% else %}
+            <span class="inline-block w-4 h-4 rounded bg-gray-700 text-white text-[9px] font-bold leading-4 text-center flex-shrink-0">$</span>
+            <span>Bash example</span>
+            {% endif %}
+            <svg class="w-3 h-3 text-gray-400 transition-transform group-open:rotate-90 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </summary>
+          <div class="border-t border-gray-200">
+            <pre class="text-xs text-gray-700 whitespace-pre-wrap font-mono bg-white m-2 rounded p-3 max-h-72 overflow-y-auto leading-relaxed" id="code-step-{{ step.step_id }}">{{ step.code_example }}</pre>
+            <div class="flex items-center gap-2 px-3 pb-2">
+              <button class="copy-code-btn text-xs bg-ucsd-sky text-white px-2.5 py-1 rounded hover:bg-ucsd-sky/90 transition"
+                      data-target="code-step-{{ step.step_id }}">
+                Copy
+              </button>
+              {% if step.github_url %}
+              <a href="{{ step.github_url }}" target="_blank" rel="noopener"
+                 class="text-xs bg-gray-200 text-gray-700 px-2.5 py-1 rounded hover:bg-gray-300 transition">
+                View on GitHub
+              </a>
+              {% endif %}
+            </div>
+          </div>
+        </details>
+        {% endif %}
+
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+</div>
+
+<!-- Tools Used Summary -->
+{% if tools_used %}
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-4">
+  <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tools Used</h2>
+  <div class="flex flex-wrap gap-1.5">
+    {% for t in tools_used %}
+    <a href="{% url 'publications:method_detail' t.method__method_id %}"
+       class="text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded hover:bg-amber-100 transition">
+      {{ t.method__canonical_name }}
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Raw Source Text -->
+{% if pipeline.raw_text %}
+<details class="bg-white rounded-lg shadow-sm border mb-4">
+  <summary class="p-4 cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wide hover:text-gray-700">
+    Raw Source Text
+  </summary>
+  <div class="px-4 pb-4">
+    <pre class="text-xs text-gray-600 whitespace-pre-wrap font-mono bg-gray-50 rounded p-3 max-h-64 overflow-y-auto">{{ pipeline.raw_text }}</pre>
+  </div>
+</details>
+{% endif %}
+
+<a href="{% url 'publications:analysis_list' %}" class="text-sm text-ucsd-sky hover:underline">&larr; Back to Analysis</a>
+
+<!-- Copy-to-clipboard JS -->
+<script>
+document.querySelectorAll('.copy-code-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var targetId = this.getAttribute('data-target');
+    var pre = document.getElementById(targetId);
+    if (!pre) return;
+    var text = pre.textContent;
+    navigator.clipboard.writeText(text).then(function() {
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+    }).catch(function() {
+      var textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+    });
+  });
+});
+</script>
+{% endblock %}

@@ -10,7 +10,7 @@ from django.db import connection
 from .models import (
     Publication, Author, PublicationAuthor, DatasetAccession,
     PublicationDataset, DatasetFile, Grant, PublicationGrant,
-    SraExperiment, SraRun,
+    SraExperiment, SraRun, AnalysisPipeline, PipelineStep,
 )
 
 
@@ -167,6 +167,33 @@ TOOL_DEFINITIONS = [
                 "query": {
                     "type": "string",
                     "description": "Grant number or agency name (e.g. 'R01', 'NIH', 'HG004659')",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_pipelines",
+        "description": (
+            "Search analysis pipelines extracted from GEO Data Processing sections "
+            "and PMC Methods sections. Returns ordered processing steps with linked "
+            "tools and versions. Use when the user asks about analysis workflows, "
+            "data processing steps, or how specific assays were analyzed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords (e.g. 'eCLIP processing', 'RNA-seq alignment', 'STAR')",
+                },
+                "assay_type": {
+                    "type": "string",
+                    "description": "Optional: filter by assay type (e.g. 'RNA-seq', 'eCLIP', 'ChIP-seq')",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default 5, max 10)",
                 },
             },
             "required": ["query"],
@@ -594,6 +621,58 @@ def search_grants(query):
     }
 
 
+def search_pipelines(query, assay_type=None, limit=5):
+    """Search analysis pipelines by keyword with optional assay filter."""
+    limit = min(max(1, limit), 10)
+
+    pipelines = AnalysisPipeline.objects.all()
+
+    if query:
+        pipelines = pipelines.filter(
+            Q(pipeline_title__icontains=query) |
+            Q(raw_text__icontains=query) |
+            Q(pmid__title__icontains=query)
+        )
+
+    if assay_type:
+        pipelines = pipelines.filter(assay_type__icontains=assay_type)
+
+    pipelines = pipelines.select_related("pmid", "accession")[:limit]
+
+    results = []
+    for p in pipelines:
+        steps = PipelineStep.objects.filter(
+            pipeline=p
+        ).select_related("method").order_by("step_order")
+
+        step_list = []
+        for s in steps:
+            step_info = {
+                "step": s.step_order,
+                "description": s.description[:200],
+            }
+            if s.tool_name:
+                step_info["tool"] = s.tool_name
+            if s.tool_version:
+                step_info["version"] = s.tool_version
+            step_list.append(step_info)
+
+        result = {
+            "pipeline_id": p.pipeline_id,
+            "title": p.pipeline_title,
+            "assay_type": p.assay_type,
+            "source": p.source,
+            "pmid": p.pmid_id,
+            "pub_title": p.pmid.title[:120] if p.pmid else None,
+            "pub_year": p.pmid.pub_year if p.pmid else None,
+            "dataset": p.accession.accession if p.accession else None,
+            "steps": step_list,
+        }
+        results.append(result)
+
+    return {"pipelines": results, "count": len(results)}
+
+
 # ============================================================
 # Tool dispatcher
 # ============================================================
@@ -607,6 +686,7 @@ _TOOL_FUNCTIONS = {
     "get_dataset": get_dataset,
     "get_database_stats": get_database_stats,
     "search_grants": search_grants,
+    "search_pipelines": search_pipelines,
 }
 
 

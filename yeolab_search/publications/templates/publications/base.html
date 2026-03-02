@@ -32,6 +32,8 @@
         <a href="{% url 'publications:search' %}" class="hover:text-ucsd-gold transition">Search</a>
         <a href="{% url 'publications:author_list' %}" class="hover:text-ucsd-gold transition">Authors</a>
         <a href="{% url 'publications:dataset_list' %}" class="hover:text-ucsd-gold transition">Datasets</a>
+        <a href="{% url 'publications:method_list' %}" class="hover:text-ucsd-gold transition">Methods</a>
+        <a href="{% url 'publications:analysis_list' %}" class="hover:text-ucsd-gold transition">Analysis</a>
         {% if user.is_authenticated %}
         <a href="{% url 'publications:chat' %}" class="hover:text-ucsd-gold transition">Chat</a>
         <a href="{% url 'publications:admin_panel' %}" class="hover:text-ucsd-gold transition">Admin</a>

@@ -45,10 +45,20 @@
             class="px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50">
       ENCODE
     </button>
+    <button onclick="startUpdate('methods')" id="btn-methods"
+            class="px-4 py-2 bg-amber-600 text-white text-sm rounded hover:bg-amber-700 transition disabled:opacity-50">
+      Extract Methods
+    </button>
+    <button onclick="startUpdate('analysis')" id="btn-analysis"
+            class="px-4 py-2 bg-teal-600 text-white text-sm rounded hover:bg-teal-700 transition disabled:opacity-50"
+            {% if not deps_ok %}disabled{% endif %}>
+      Extract Analysis
+    </button>
   </div>
   <p class="text-xs text-gray-400 mt-2">
     ENCODE fetches experiments for grants U41HG009889 and U54HG007005 from encodeproject.org.
-    Only requires <code class="bg-gray-100 px-1 rounded">requests</code> (no biopython needed).
+    Methods extraction scans abstracts, keywords, GEO, and SRA metadata for computational tools — no external API access needed.
+    Analysis extraction parses ordered processing steps from GEO Data Processing sections and PMC full-text Methods — requires NCBI access.
   </p>
 
   <!-- Status display -->
@@ -62,6 +72,35 @@
       <h3 class="text-xs font-semibold text-gray-500 uppercase mb-1">Final Counts</h3>
       <div id="stats-grid" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs"></div>
     </div>
+  </div>
+</div>
+
+<!-- Code Examples Sync -->
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Code Examples</h2>
+  <p class="text-sm text-gray-600 mb-4">
+    Edit the dataset-keyed code examples registry, sync from GitHub, or re-populate pipeline steps with updated snippets.
+  </p>
+  <div class="flex flex-wrap gap-2 items-center">
+    <a href="{% url 'publications:admin_code_editor' %}"
+       class="px-4 py-2 bg-indigo-700 text-white text-sm rounded hover:bg-indigo-800 transition inline-block">
+      Open JSON Editor
+    </a>
+    <button onclick="syncCodeExamples(false)" id="btn-sync"
+            class="px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition disabled:opacity-50">
+      Sync from GitHub
+    </button>
+    <button onclick="syncCodeExamples(true)" id="btn-sync-backfill"
+            class="px-4 py-2 bg-indigo-500 text-white text-sm rounded hover:bg-indigo-600 transition disabled:opacity-50">
+      Sync + Backfill
+    </button>
+    <label class="flex items-center gap-1 text-xs text-gray-500">
+      <input type="checkbox" id="sync-force" class="rounded border-gray-300">
+      Force overwrite existing
+    </label>
+  </div>
+  <div id="sync-result" class="mt-4 hidden">
+    <pre id="sync-output" class="bg-gray-50 rounded border p-3 text-xs font-mono text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
   </div>
 </div>
 
@@ -226,6 +265,44 @@ function pollStatus() {
   document.querySelectorAll('[id^="btn-"]').forEach(b => b.disabled = true);
   pollInterval = setInterval(pollStatus, 2000);
 {% endif %}
+
+// =============================================
+// Sync Code Examples
+// =============================================
+function syncCodeExamples(backfill) {
+  const btn1 = document.getElementById('btn-sync');
+  const btn2 = document.getElementById('btn-sync-backfill');
+  btn1.disabled = true;
+  btn2.disabled = true;
+
+  const force = document.getElementById('sync-force').checked;
+  const panel = document.getElementById('sync-result');
+  const output = document.getElementById('sync-output');
+  panel.classList.remove('hidden');
+  output.textContent = 'Syncing from GitHub...';
+
+  let body = '';
+  if (backfill) body += 'backfill=1&';
+  if (force) body += 'force=1&';
+
+  postJSON('{% url "publications:admin_sync_code_examples" %}', body)
+  .then(data => {
+    if (data.ok) {
+      output.textContent = data.output || 'Sync complete.';
+      if (data.errors) output.textContent += '\n\nErrors:\n' + data.errors;
+    } else {
+      output.textContent = 'Error: ' + (data.message || 'Unknown error');
+      if (data.output) output.textContent += '\n\nOutput:\n' + data.output;
+    }
+    btn1.disabled = false;
+    btn2.disabled = false;
+  })
+  .catch(err => {
+    output.textContent = 'Request failed: ' + err;
+    btn1.disabled = false;
+    btn2.disabled = false;
+  });
+}
 
 // =============================================
 // Add Publication (preview → confirm)
