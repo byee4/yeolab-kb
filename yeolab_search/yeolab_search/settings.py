@@ -56,6 +56,7 @@ MIDDLEWARE = [
     'social_django.middleware.SocialAuthExceptionMiddleware',
     'globus_portal_framework.middleware.ExpiredTokenMiddleware',
     'globus_portal_framework.middleware.GlobusAuthExceptionMiddleware',
+    'yeolab_search.middleware.GlobusDebugMiddleware',
 ]
 
 AUTHENTICATION_BACKENDS = [
@@ -194,3 +195,4 @@ if not DEBUG:
 '''
 CSRF_TRUSTED_ORIGINS = ['https://yeolab-kb-stbkj.ondigitalocean.app']
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_PORT = True
