@@ -62,7 +62,6 @@ MIDDLEWARE = [
 AUTHENTICATION_BACKENDS = [
     'globus_portal_framework.auth.GlobusOpenIdConnect', # Keep this for the portal framework
     'django.contrib.auth.backends.ModelBackend',
-    'social_core.backends.globus.GlobusOAuth2',
 ]
 
 ROOT_URLCONF = 'yeolab_search.urls'
