@@ -144,7 +144,6 @@ SOCIAL_AUTH_GLOBUS_SCOPE = [
     'urn:globus:auth:scope:search.api.globus.org:search',
     'urn:globus:auth:scope:transfer.api.globus.org:all',
     'urn:globus:auth:scope:groups.api.globus.org:view_my_groups_and_memberships',
-    f'https://auth.globus.org/scopes/{GLOBUS_COLLECTION}/https',
     'urn:globus:auth:scope:auth.globus.org:view_identities',
 ]
 
