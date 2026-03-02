@@ -144,6 +144,17 @@ SOCIAL_AUTH_GLOBUS_SCOPE = [
     'email',
 ]
 
+# In reverse-proxy environments (e.g., App Platform), force HTTPS callback
+# generation so OAuth redirect_uri exactly matches provider registration.
+SOCIAL_AUTH_REDIRECT_IS_HTTPS = not DEBUG
+
+# Optional explicit override for OAuth callback URL.
+# Example: https://yeolab-kb-stbkj.ondigitalocean.app/complete/globus/
+SOCIAL_AUTH_GLOBUS_REDIRECT_URI = os.environ.get(
+    'SOCIAL_AUTH_GLOBUS_REDIRECT_URI',
+    '',
+).strip()
+
 LOGIN_URL = '/login/globus/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
