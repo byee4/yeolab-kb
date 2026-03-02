@@ -16,6 +16,9 @@ services:
       - key: DATABASE_URL
         scope: RUN_TIME
         value: ${db.DATABASE_URL}
+      - key: PGOPTIONS
+        scope: RUN_TIME
+        value: "-c search_path=yeolab,public"
       - key: DJANGO_SECRET_KEY
         scope: RUN_AND_BUILD_TIME
         type: SECRET
@@ -69,6 +72,9 @@ jobs:
       - key: DATABASE_URL
         scope: RUN_TIME
         value: ${db.DATABASE_URL}
+      - key: PGOPTIONS
+        scope: RUN_TIME
+        value: "-c search_path=yeolab,public"
       - key: DJANGO_SECRET_KEY
         scope: RUN_TIME
         value: ${web.DJANGO_SECRET_KEY}

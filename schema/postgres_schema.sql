@@ -3,6 +3,11 @@
 
 BEGIN;
 
+-- App Platform-managed DB users may not have CREATE on schema public.
+-- Create/use an app-owned schema instead.
+CREATE SCHEMA IF NOT EXISTS yeolab;
+SET search_path TO yeolab, public;
+
 -- ============================================================
 -- Core tables
 -- ============================================================
