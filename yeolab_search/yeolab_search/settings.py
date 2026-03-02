@@ -144,6 +144,7 @@ SOCIAL_AUTH_GLOBUS_SCOPE = [
     'openid',
     'profile',
     'email',
+    'urn:globus:auth:scope:auth.globus.org:view_identities',
 ]
 
 # In reverse-proxy environments (e.g., App Platform), force HTTPS callback
