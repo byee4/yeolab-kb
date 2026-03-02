@@ -42,8 +42,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.staticfiles',
     'social_django',
-    'globus_portal_framework',
     'publications',
+    'globus_portal_framework',
 ]
 
 MIDDLEWARE = [
@@ -150,12 +150,13 @@ SOCIAL_AUTH_REDIRECT_IS_HTTPS = not DEBUG
 
 # Optional explicit override for OAuth callback URL.
 # Example: https://yeolab-kb-stbkj.ondigitalocean.app/complete/globus/
-SOCIAL_AUTH_GLOBUS_REDIRECT_URI = os.environ.get(
-    'SOCIAL_AUTH_GLOBUS_REDIRECT_URI',
-    '',
-).strip()
+#SOCIAL_AUTH_GLOBUS_REDIRECT_URI = os.environ.get(
+#    'SOCIAL_AUTH_GLOBUS_REDIRECT_URI',
+#    '',
+#).strip()
+SOCIAL_AUTH_GLOBUS_REDIRECT_URI = 'https://yeolab-kb-stbkj.ondigitalocean.app/complete/globus/'
 
-LOGIN_URL = '/login/globus/'
+LOGIN_URL = '/login/globus'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 
