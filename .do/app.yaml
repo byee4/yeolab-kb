@@ -25,13 +25,13 @@ services:
         value: "False"
       - key: DJANGO_ALLOWED_HOSTS
         scope: RUN_TIME
-        value: ${APP_DOMAIN}
+        value: ".ondigitalocean.app,localhost,127.0.0.1"
       - key: CSRF_TRUSTED_ORIGINS
         scope: RUN_TIME
-        value: https://${APP_DOMAIN}
+        value: "https://*.ondigitalocean.app"
       - key: SECURE_SSL_REDIRECT
         scope: RUN_TIME
-        value: "False"
+        value: "True"
       - key: GLOBUS_CLIENT_ID
         scope: RUN_AND_BUILD_TIME
         type: SECRET
@@ -72,4 +72,4 @@ jobs:
       - key: DJANGO_SECRET_KEY
         scope: RUN_TIME
         value: ${web.DJANGO_SECRET_KEY}
-    run_command: cd /app/yeolab_search && python manage.py migrate --noinput && python manage.py ensure_schema
+    run_command: cd /app && psql "$DATABASE_URL" -f schema/postgres_schema.sql && cd /app/yeolab_search && python manage.py migrate --noinput && python manage.py ensure_schema
