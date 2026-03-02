@@ -192,3 +192,5 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 '''
+CSRF_TRUSTED_ORIGINS = ['https://yeolab-kb-stbkj.ondigitalocean.app']
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
