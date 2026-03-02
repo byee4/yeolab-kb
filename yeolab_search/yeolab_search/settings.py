@@ -60,9 +60,9 @@ MIDDLEWARE = [
 ]
 
 AUTHENTICATION_BACKENDS = [
-    'social_core.backends.globus.GlobusOpenIdConnect',  # Add this for social_django
     'globus_portal_framework.auth.GlobusOpenIdConnect', # Keep this for the portal framework
     'django.contrib.auth.backends.ModelBackend',
+    'social_core.backends.globus.GlobusOAuth2',
 ]
 
 ROOT_URLCONF = 'yeolab_search.urls'
@@ -78,6 +78,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'social_django.context_processors.backends',
                 'social_django.context_processors.login_redirect',
+                'globus_portal_framework.context_processors.globals',
             ],
         },
     },
@@ -141,9 +142,9 @@ SOCIAL_AUTH_GLOBUS_KEY = os.environ.get('GLOBUS_CLIENT_ID', '')
 SOCIAL_AUTH_GLOBUS_SECRET = os.environ.get('GLOBUS_CLIENT_SECRET', '')
 
 SOCIAL_AUTH_GLOBUS_SCOPE = [
-    'urn:globus:auth:scope:search.api.globus.org:search',
-    'urn:globus:auth:scope:transfer.api.globus.org:all',
-    'urn:globus:auth:scope:groups.api.globus.org:view_my_groups_and_memberships',
+    'openid',
+    'profile',
+    'email',
     'urn:globus:auth:scope:auth.globus.org:view_identities',
 ]
 
@@ -198,4 +199,3 @@ if not DEBUG:
 CSRF_TRUSTED_ORIGINS = ['https://yeolab-kb-stbkj.ondigitalocean.app']
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_PORT = True
-X_FRAME_OPTIONS = 'SAMEORIGIN'
