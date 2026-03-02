@@ -3,7 +3,7 @@ name: yeolab-search
 services:
   - name: web
     github:
-      repo: <your-github-username>/yeolab-search
+      repo: byee4/yeolab-kb
       branch: main
       deploy_on_push: true
     dockerfile_path: Dockerfile
@@ -40,6 +40,16 @@ services:
         scope: RUN_AND_BUILD_TIME
         type: SECRET
         value: CHANGE_ME
+      - key: GITHUB_PAT
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+        value: CHANGE_ME
+      - key: GITHUB_REPO
+        scope: RUN_TIME
+        value: byee4/yeolab-publications-db
+      - key: GITHUB_BRANCH
+        scope: RUN_TIME
+        value: main
 
 databases:
   - name: db
@@ -51,7 +61,7 @@ databases:
 jobs:
   - name: migrate
     github:
-      repo: <your-github-username>/yeolab-search
+      repo: byee4/yeolab-kb
       branch: main
     dockerfile_path: Dockerfile
     kind: PRE_DEPLOY
@@ -62,4 +72,4 @@ jobs:
       - key: DJANGO_SECRET_KEY
         scope: RUN_TIME
         value: ${web.DJANGO_SECRET_KEY}
-    run_command: cd /app/yeolab_search && python manage.py migrate --noinput
+    run_command: cd /app/yeolab_search && python manage.py migrate --noinput && python manage.py ensure_schema

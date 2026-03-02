@@ -2,7 +2,7 @@
 
 SQLite3 database of all Yeo Lab (Gene Yeo, UCSD) publications with PubMed metadata, author networks, grant information, and GEO/SRA dataset linkage. Includes a Django web app with search, browsing, bulk download scripts, and a REST API.
 
-## Current State (Feb 2026)
+## Current State (Mar 2026)
 
 | Table | Rows | Notes |
 |---|---|---|
@@ -11,11 +11,14 @@ SQLite3 database of all Yeo Lab (Gene Yeo, UCSD) publications with PubMed metada
 | publication_authors | 4,682 | Author–paper links with position (first/last) |
 | grants | 760 | NIH/NSF/etc grant numbers |
 | publication_grants | 1,879 | Paper–grant links |
-| dataset_accessions | 528 | GEO/SRA/ENCODE accessions with full metadata |
-| sra_experiments | 5,980 | SRX experiments with library/sample metadata |
-| sra_runs | 7,368 | SRR runs with spots, bases, sizes, file names |
-| dataset_files | 8,064 | Original file names per dataset |
-| publication_datasets | 583+ | Paper–dataset links (strong + potentially related) |
+| dataset_accessions | 2,476 | GEO/SRA/ENCODE accessions with full metadata |
+| sra_experiments | 11,764 | SRX experiments with library/sample metadata |
+| sra_runs | 14,173 | SRR runs with spots, bases, sizes, file names |
+| dataset_files | 96,404 | Data files with rich metadata from ENCODE/GEO/SRA |
+| publication_datasets | 2,383 | Paper–dataset links (strong + potentially related) |
+| analysis_pipelines | 289 | Extracted analysis pipeline records |
+| pipeline_steps | 2,039 | Parsed processing steps across pipelines |
+| computational_methods | 43 | Curated methods/tool canonical table |
 | publication_summaries | 0 | AI-generated summaries (placeholder) |
 
 ## Quick Start
@@ -79,7 +82,7 @@ python manage.py runserver
 # → Chat:    http://127.0.0.1:8000/chat/  (login required)
 ```
 
-Features: full-text search across titles/abstracts, filter by year/journal/author, publication detail pages with authors and datasets (with potentially related datasets shown separately), author profiles with co-author networks, dataset browser with supplementary files and SRA experiment metadata, bulk download script generation, a full REST API, Globus-based authentication, an AI chat interface powered by Claude or ChatGPT (BYOK — bring your own Anthropic/OpenAI API key), and an admin panel (login required) with one-click database updates plus add/remove publication management with preview confirmation. The app uses the existing `yeolab_publications.db` directly. Override the database path with `YEOLAB_DB_PATH` env var if needed.
+Features: full-text search across titles/abstracts, filter by year/journal/author, publication detail pages with authors and datasets (with potentially related datasets shown separately), author profiles with co-author networks, dataset browser with supplementary files and SRA/ENCODE metadata, bulk download script generation, Analysis views, a full REST API, Globus-based authentication, an AI chat interface powered by Claude or ChatGPT (BYOK — bring your own Anthropic/OpenAI API key), and an admin panel (login required) with update controls plus add/remove publication management with preview confirmation. The app uses `DATABASE_URL` for PostgreSQL when set, otherwise falls back to `yeolab_publications.db` (override with `YEOLAB_DB_PATH`).
 
 ### 4. Admin panel & updates (via web UI)
 
@@ -96,7 +99,9 @@ python manage.py runserver
 
 **Globus authentication setup**: Register an application at https://app.globus.org/settings/developers (select "Register a portal, science gateway, or other application"). Set the redirect URL to `http://localhost:8000/complete/globus/` (or your production URL). Then set the environment variables `GLOBUS_CLIENT_ID` and `GLOBUS_CLIENT_SECRET` before starting the server. Public pages (search, browse, API) remain accessible without login.
 
-**One-click update** (`/admin/`): Click "Full Update", "PubMed Only", "GEO/SRA Only", or "ENCODE" to run a background update. Progress and logs stream in real time. Existing records are never overwritten — only new publications and datasets are added. The ENCODE button fetches experiments for grants U41HG009889 and U54HG007005 from encodeproject.org and imports them into the database (requires only `requests`, no biopython needed).
+**One-click update** (`/admin/`): Click update modes to run background jobs. Supported modes are `full`, `pubmed`, `geo`, `encode`, `methods`, and `analysis`. Progress and logs stream in real time.
+
+**Code Examples Editor** (`/admin/code-editor/`): Edit per-dataset JSON files used by the Analysis views. Save operations return the full local file path. Files are stored under `code_examples/{year}/{Mon}/{ACCESSION}.json`, with `locked: true` by default to prevent future Extract Analysis overwrites.
 
 **Add a publication** (`/admin/`): Enter a PubMed ID and click "Preview" to fetch metadata from PubMed. A summary (title, authors, journal, year, grants) is displayed for confirmation before inserting. If the PMID already exists, you're shown a link to the existing record.
 
@@ -112,7 +117,7 @@ Logged-in users can ask natural language questions about publications, authors, 
 pip install anthropic openai   # if not already installed
 ```
 
-Users provide their own Anthropic or OpenAI API key (stored in browser localStorage only — never sent to or saved on the server). You can select provider and model in the chat UI. Both providers have access to 8 tools: `search_publications`, `get_publication`, `search_authors`, `get_author`, `search_datasets`, `get_dataset`, `get_database_stats`, and `search_grants`. Responses stream in real time via Server-Sent Events.
+Users provide their own Anthropic or OpenAI API key (stored in browser localStorage only — never sent to or saved on the server). You can select provider and model in the chat UI. Both providers have access to 9 tools: `search_publications`, `get_publication`, `search_authors`, `get_author`, `search_datasets`, `get_dataset`, `get_database_stats`, `search_grants`, and `search_pipelines`. Responses stream in real time via Server-Sent Events.
 
 Example questions: "What are the lab's most recent publications?", "Which datasets use eCLIP?", "Who are Gene Yeo's top collaborators?", "Summarize the lab's work on TDP-43".
 
@@ -250,7 +255,7 @@ curl -X POST http://localhost:8000/api/remove/ \
 
 #### `POST /api/update/start/`
 
-Start a background database update. Send `mode` as form data: `full`, `pubmed`, or `geo`.
+Start a background database update (login required). Send `mode` as form data: `full`, `pubmed`, `geo`, `encode`, `methods`, or `analysis`.
 
 ```bash
 curl -X POST http://localhost:8000/api/update/start/ -d "mode=pubmed"
@@ -403,10 +408,118 @@ The application supports production deployment with Docker and PostgreSQL on eit
 
 ```bash
 # Start PostgreSQL + Django locally
-docker compose up --build
+docker compose up -d --build
 
 # Migrate existing SQLite data to PostgreSQL (one-time)
-docker compose --profile migrate run migrate-data
+docker compose --profile migrate run --rm migrate-data
+```
+
+**To refresh your Docker instance with all the new changes (code examples system, sync command, schema updates), run:**
+```bash
+# Rebuild the image to pick up new files
+docker compose build
+
+# Restart with the updated image
+docker compose up -d
+
+# Run schema migration + backfill code examples
+docker compose exec web python manage.py ensure_schema
+docker compose exec web python manage.py backfill_code_examples --force
 ```
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for complete instructions covering AWS EB, DigitalOcean, environment variables, data migration, CI/CD, and the production checklist.
+
+## Troubleshooting (Docker Compose + PostgreSQL)
+
+### Symptom: `web` returns 500 with `server closed the connection unexpectedly`
+
+If you see logs like:
+- `db ... received fast shutdown request`
+- `web ... psycopg2.OperationalError: server closed the connection unexpectedly`
+
+this usually means PostgreSQL restarted or was stopped while Django still had open DB connections.
+
+### Safe recovery (no data loss)
+
+Run from the project root:
+
+```bash
+# 1) Stop web first so no requests hit a restarting DB
+docker compose stop web
+
+# 2) Back up Postgres volume before recovery
+docker run --rm -v yeolab_postgres_data:/data -v "$PWD":/backup alpine \
+  sh -c 'cd /data && tar czf /backup/postgres_data_backup_$(date +%Y%m%d_%H%M%S).tgz .'
+
+# 3) Start DB and wait until healthy
+docker compose up -d db
+docker compose ps
+docker compose logs -f db
+
+# 4) Verify DB connectivity
+docker compose exec db pg_isready -U yeolab -d yeolab_publications
+docker compose exec db psql -U yeolab -d yeolab_publications -c "select now();"
+
+# 5) Start web and verify endpoint health
+docker compose up -d web
+docker compose ps
+curl -i http://localhost:8000/healthz/
+```
+
+### Hardening now included in this repo
+
+- `db` and `web` use `restart: unless-stopped` in `docker-compose.yml`
+- `web` has a Compose healthcheck that probes `http://127.0.0.1:8000/healthz/`
+- Django DB settings enable connection health checks (`CONN_HEALTH_CHECKS=True`) when using `DATABASE_URL`
+
+These reduce user-facing 500s after transient DB restarts by recycling stale connections.
+
+### Symptom: "Save Locally" appears to work but files are not visible on host
+
+`Save Locally` writes to the container's resolved `code_examples` directory. In this repo, the expected host path is:
+
+- `<repo>/yeolab-publications-db/code_examples`
+
+`<repo>/code_examples` is a symlink to that directory.
+
+If files are not showing up, recreate the `web` container so updated bind mounts are applied:
+
+```bash
+docker compose up -d --force-recreate web
+```
+
+### Symptom: "Fetch from GitHub" returns 404
+
+`Fetch from GitHub` reads from:
+
+- `GITHUB_REPO` (default `byee4/yeolab-publications-db`)
+- `GITHUB_BRANCH` (default `main`)
+
+and attempts both nested (`code_examples/<year>/<Mon>/<accession>.json`) and root paths.
+
+If it still returns 404:
+
+1. The file may not exist on that repo/branch yet.
+2. `GITHUB_PAT` may be missing for private repo access.
+3. `GITHUB_REPO`/`GITHUB_BRANCH` may target the wrong remote.
+
+Set these in `.env` and recreate web:
+
+```bash
+GITHUB_PAT=ghp_...
+GITHUB_REPO=byee4/yeolab-publications-db
+GITHUB_BRANCH=main
+docker compose up -d --force-recreate web
+```
+
+### Last resort (rebuild Postgres data volume)
+
+Only do this if the DB volume is corrupted and you have a backup:
+
+```bash
+docker compose down
+docker volume rm yeolab_postgres_data
+docker compose up -d db
+docker compose --profile migrate run --rm migrate-data
+docker compose up -d web
+```

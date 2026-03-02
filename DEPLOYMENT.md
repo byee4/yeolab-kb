@@ -15,7 +15,7 @@ This guide covers deploying the Yeo Lab Publications Database to production usin
 
 ```bash
 # Start PostgreSQL + Django
-docker compose up --build
+docker compose up -d --build
 
 # The app will be available at http://localhost:8000
 ```
@@ -24,7 +24,7 @@ docker compose up --build
 
 ```bash
 # One-time data migration (requires yeolab_publications.db in project root)
-docker compose --profile migrate run migrate-data
+docker compose --profile migrate run --rm migrate-data
 ```
 
 **Local development without Docker** (SQLite backend):
@@ -49,6 +49,10 @@ When no `DATABASE_URL` is set, the app automatically uses SQLite at `../yeolab_p
 | `CSRF_TRUSTED_ORIGINS` | Production | (empty) | Comma-separated origins for CSRF |
 | `GLOBUS_CLIENT_ID` | For auth | (empty) | Globus OAuth2 client ID |
 | `GLOBUS_CLIENT_SECRET` | For auth | (empty) | Globus OAuth2 client secret |
+| `GITHUB_PAT` | Optional | (empty) | PAT for Code Examples Editor GitHub fetch/push |
+| `GITHUB_REPO` | Optional | `byee4/yeolab-publications-db` | Repo containing `code_examples/` JSON |
+| `GITHUB_BRANCH` | Optional | `main` | Branch containing `code_examples/` JSON |
+| `CODE_EXAMPLES_DIR` | Optional | auto-discovered | Override local `code_examples` directory |
 | `SECURE_SSL_REDIRECT` | No | `True` (prod) | Set `False` if LB handles SSL |
 
 Copy `.env.example` to `.env` and fill in your values for local Docker development.
@@ -123,7 +127,8 @@ Or push to `main` to trigger the GitHub Actions workflow (requires `AWS_ACCESS_K
 
 ### 1. Create the App
 
-Edit `.do/app.yaml` — replace `<your-github-username>` with your GitHub username, then:
+This repo is already configured in `.do/app.yaml` as `byee4/yeolab-kb` on `main`.
+Create the app:
 
 ```bash
 doctl apps create --spec .do/app.yaml
@@ -137,6 +142,7 @@ In the DO dashboard (or via CLI), set these app-level environment variables:
 - `DJANGO_SECRET_KEY`
 - `GLOBUS_CLIENT_ID`
 - `GLOBUS_CLIENT_SECRET`
+- `GITHUB_PAT` (optional but recommended for Code Examples Editor GitHub sync/push)
 
 The `DATABASE_URL` is automatically injected by the managed database component.
 
@@ -164,6 +170,16 @@ Push to `main` to trigger automatic deployment. Or manually:
 doctl apps create-deployment YOUR_APP_ID
 ```
 
+### 6. Release v1.0.0 (this repo)
+
+```bash
+git checkout main
+git pull origin main
+git tag -a 1.0.0 -m "Release 1.0.0"
+git push origin main
+git push origin 1.0.0
+```
+
 ## Data Migration from SQLite
 
 The migration script transfers all data from the existing SQLite database to PostgreSQL:
@@ -178,10 +194,22 @@ python scripts/migrate_sqlite_to_postgres.py \
 The `--schema` flag is optional if you've already created the schema. The script:
 
 1. Creates the PostgreSQL schema (if `--schema` provided)
-2. Migrates all 12 tables in dependency order
+2. Migrates all core tables in dependency order
 3. Resets PostgreSQL sequences (auto-increment counters)
 4. Populates full-text search vectors
 5. Validates row counts match between databases
+
+## Post-Deploy Schema Safety
+
+This app uses unmanaged models for most domain tables, plus Django-managed auth/session tables. After deploy, run:
+
+```bash
+cd /app/yeolab_search
+python manage.py migrate --noinput
+python manage.py ensure_schema
+```
+
+`ensure_schema` is idempotent and adds expected late-added columns in unmanaged tables.
 
 ## Updating Globus OAuth2 Redirect URL
 

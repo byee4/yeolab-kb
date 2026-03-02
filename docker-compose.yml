@@ -1,8 +1,7 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: yeolab_publications
       POSTGRES_USER: yeolab
@@ -20,11 +19,8 @@ services:
 
   web:
     build: .
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120
-             --access-logfile - --error-logfile -
-             yeolab_search.wsgi:application"
+    restart: unless-stopped
+    command: sh -c "python manage.py migrate --noinput && python manage.py ensure_schema && gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120 --access-logfile - --error-logfile - yeolab_search.wsgi:application"
     ports:
       - "8000:8000"
     environment:
@@ -34,11 +30,25 @@ services:
       DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0"
       GLOBUS_CLIENT_ID: ${GLOBUS_CLIENT_ID:-}
       GLOBUS_CLIENT_SECRET: ${GLOBUS_CLIENT_SECRET:-}
+      GITHUB_PAT: ${GITHUB_PAT:-}
+      GITHUB_REPO: ${GITHUB_REPO:-byee4/yeolab-publications-db}
+      GITHUB_BRANCH: ${GITHUB_BRANCH:-main}
     volumes:
       - ./yeolab_search:/app/yeolab_search
+      - ./code_examples:/app/yeolab-publications-db/code_examples
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz/', timeout=3).getcode() == 200 else 1)\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # Optional: run data migration from SQLite
   migrate-data:
