@@ -60,6 +60,8 @@ MIDDLEWARE = [
 ]
 
 AUTHENTICATION_BACKENDS = [
+	# Add this line first for social_django to work
+    'social_core.backends.globus.GlobusOpenIdConnect',
     'globus_portal_framework.auth.GlobusOpenIdConnect', # Keep this for the portal framework
     'django.contrib.auth.backends.ModelBackend',
 ]
