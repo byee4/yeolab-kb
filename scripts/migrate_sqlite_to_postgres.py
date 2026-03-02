@@ -36,6 +36,10 @@ TABLE_ORDER = [
     "publication_grants",
     "sra_experiments",
     "sra_runs",
+    "computational_methods",
+    "publication_methods",
+    "analysis_pipelines",
+    "pipeline_steps",
     "publication_summaries",
     "update_log",
 ]
@@ -100,7 +104,11 @@ def reset_sequences(pg_conn):
         "SELECT setval('publication_grants_id_seq', COALESCE((SELECT MAX(id) FROM publication_grants), 0) + 1, false)",
         "SELECT setval('sra_experiments_experiment_id_seq', COALESCE((SELECT MAX(experiment_id) FROM sra_experiments), 0) + 1, false)",
         "SELECT setval('sra_runs_run_id_seq', COALESCE((SELECT MAX(run_id) FROM sra_runs), 0) + 1, false)",
-        "SELECT setval('update_log_id_seq', COALESCE((SELECT MAX(id) FROM update_log), 0) + 1, false)",
+        "SELECT setval('update_log_update_id_seq', COALESCE((SELECT MAX(update_id) FROM update_log), 0) + 1, false)",
+        "SELECT setval('computational_methods_method_id_seq', COALESCE((SELECT MAX(method_id) FROM computational_methods), 0) + 1, false)",
+        "SELECT setval('publication_methods_id_seq', COALESCE((SELECT MAX(id) FROM publication_methods), 0) + 1, false)",
+        "SELECT setval('analysis_pipelines_pipeline_id_seq', COALESCE((SELECT MAX(pipeline_id) FROM analysis_pipelines), 0) + 1, false)",
+        "SELECT setval('pipeline_steps_step_id_seq', COALESCE((SELECT MAX(step_id) FROM pipeline_steps), 0) + 1, false)",
     ]
     cur = pg_conn.cursor()
     for q in seq_queries:

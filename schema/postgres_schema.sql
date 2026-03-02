@@ -230,11 +230,82 @@ CREATE TABLE IF NOT EXISTS publication_summaries (
 
 
 CREATE TABLE IF NOT EXISTS update_log (
-    id          SERIAL PRIMARY KEY,
-    update_type TEXT,
-    status      TEXT,
-    message     TEXT,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    update_id               SERIAL PRIMARY KEY,
+    update_time             TEXT DEFAULT to_char(CURRENT_TIMESTAMP, 'YYYY-MM-DD HH24:MI:SS'),
+    total_pmids_in_pubmed   INTEGER,
+    new_pmids_added         INTEGER,
+    metadata_updated        INTEGER,
+    accessions_found        INTEGER,
+    notes                   TEXT
 );
+
+
+-- ============================================================
+-- Computational Methods
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS computational_methods (
+    method_id       SERIAL PRIMARY KEY,
+    canonical_name  TEXT NOT NULL UNIQUE,
+    category        TEXT NOT NULL,
+    url             TEXT,
+    description     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_methods_category ON computational_methods(category);
+
+
+CREATE TABLE IF NOT EXISTS publication_methods (
+    id          SERIAL PRIMARY KEY,
+    pmid        TEXT NOT NULL REFERENCES publications(pmid),
+    method_id   INTEGER NOT NULL REFERENCES computational_methods(method_id),
+    version     TEXT,
+    source_type TEXT NOT NULL,
+    matched_text TEXT,
+    UNIQUE(pmid, method_id, source_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pub_methods_pmid ON publication_methods(pmid);
+CREATE INDEX IF NOT EXISTS idx_pub_methods_method ON publication_methods(method_id);
+
+
+-- ============================================================
+-- Analysis Pipelines (ordered processing steps)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS analysis_pipelines (
+    pipeline_id     SERIAL PRIMARY KEY,
+    pmid            TEXT NOT NULL REFERENCES publications(pmid) ON DELETE CASCADE,
+    accession_id    INTEGER REFERENCES dataset_accessions(accession_id) ON DELETE SET NULL,
+    assay_type      TEXT,
+    pipeline_title  TEXT,
+    source          TEXT NOT NULL,
+    raw_text        TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipelines_pmid ON analysis_pipelines(pmid);
+CREATE INDEX IF NOT EXISTS idx_pipelines_accession ON analysis_pipelines(accession_id);
+CREATE INDEX IF NOT EXISTS idx_pipelines_assay ON analysis_pipelines(assay_type);
+
+
+CREATE TABLE IF NOT EXISTS pipeline_steps (
+    step_id         SERIAL PRIMARY KEY,
+    pipeline_id     INTEGER NOT NULL REFERENCES analysis_pipelines(pipeline_id) ON DELETE CASCADE,
+    step_order      INTEGER NOT NULL,
+    description     TEXT NOT NULL,
+    method_id       INTEGER REFERENCES computational_methods(method_id) ON DELETE SET NULL,
+    tool_name       TEXT,
+    tool_version    TEXT,
+    parameters      TEXT,
+    code_example    TEXT,
+    code_language   VARCHAR(10),
+    github_url      TEXT,
+    UNIQUE(pipeline_id, step_order)
+);
+
+CREATE INDEX IF NOT EXISTS idx_steps_pipeline ON pipeline_steps(pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_steps_method ON pipeline_steps(method_id);
+
 
 COMMIT;
