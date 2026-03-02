@@ -72,4 +72,16 @@ jobs:
       - key: DJANGO_SECRET_KEY
         scope: RUN_TIME
         value: ${web.DJANGO_SECRET_KEY}
-    run_command: cd /app && psql "$DATABASE_URL" -f schema/postgres_schema.sql && cd /app/yeolab_search && python manage.py migrate --noinput && python manage.py ensure_schema
+    run_command: >
+      sh -c '
+      set -e;
+      echo "Waiting for PostgreSQL to accept connections...";
+      until pg_isready -d "$DATABASE_URL"; do sleep 2; done;
+      echo "Applying base schema...";
+      psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /app/schema/postgres_schema.sql;
+      cd /app/yeolab_search;
+      echo "Running Django migrations...";
+      python manage.py migrate --noinput;
+      echo "Running ensure_schema...";
+      python manage.py ensure_schema;
+      '
