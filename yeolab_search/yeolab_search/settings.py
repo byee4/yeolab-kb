@@ -198,3 +198,4 @@ if not DEBUG:
 CSRF_TRUSTED_ORIGINS = ['https://yeolab-kb-stbkj.ondigitalocean.app']
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_PORT = True
+X_FRAME_OPTIONS = 'SAMEORIGIN'
