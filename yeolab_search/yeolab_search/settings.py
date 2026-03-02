@@ -61,7 +61,7 @@ MIDDLEWARE = [
 
 AUTHENTICATION_BACKENDS = [
 	# Add this line first for social_django to work
-    'social_core.backends.globus.GlobusOAuth2',
+    'social_core.backends.globus.GlobusOpenIdConnect',
     'globus_portal_framework.auth.GlobusOpenIdConnect', # Keep this for the portal framework
     'django.contrib.auth.backends.ModelBackend',
 ]
@@ -143,7 +143,10 @@ SOCIAL_AUTH_GLOBUS_KEY = os.environ.get('GLOBUS_CLIENT_ID', '').strip()
 SOCIAL_AUTH_GLOBUS_SECRET = os.environ.get('GLOBUS_CLIENT_SECRET', '').strip()
 
 SOCIAL_AUTH_GLOBUS_SCOPE = [
-    'urn:globus:auth:scope:auth.globus.org:view_identities',
+    'openid',
+    'profile',
+    'email',
+    #'urn:globus:auth:scope:auth.globus.org:view_identities',
 ]
 
 # In reverse-proxy environments (e.g., App Platform), force HTTPS callback
