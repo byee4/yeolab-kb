@@ -93,6 +93,12 @@
       Upload JSON
     </button>
   </div>
+  <div id="encode-upload-progress-wrap" class="mt-3 hidden">
+    <div class="w-full bg-gray-100 border rounded h-2 overflow-hidden">
+      <div id="encode-upload-progress-bar" class="h-2 bg-purple-600 transition-all duration-200" style="width: 0%;"></div>
+    </div>
+    <div id="encode-upload-progress-text" class="text-xs text-gray-500 mt-1">Starting...</div>
+  </div>
   <div id="encode-upload-result" class="mt-4 hidden">
     <pre id="encode-upload-output" class="bg-gray-50 rounded border p-3 text-xs font-mono text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
   </div>
@@ -235,6 +241,16 @@ function showEncodeUploadResult(text, isError=false) {
     (isError ? 'text-red-700 border-red-200 bg-red-50' : 'text-gray-600');
 }
 
+function setEncodeUploadProgress(percent, label) {
+  const wrap = document.getElementById('encode-upload-progress-wrap');
+  const bar = document.getElementById('encode-upload-progress-bar');
+  const text = document.getElementById('encode-upload-progress-text');
+  wrap.classList.remove('hidden');
+  const p = Math.max(0, Math.min(100, Math.round(percent)));
+  bar.style.width = p + '%';
+  text.textContent = label || `${p}%`;
+}
+
 // =============================================
 // Bulk Update
 // =============================================
@@ -308,31 +324,64 @@ function uploadEncodeJson() {
 
   btn.disabled = true;
   showEncodeUploadResult('Uploading and importing ENCODE JSON...');
+  setEncodeUploadProgress(0, 'Preparing upload...');
 
-  fetch('{% url "publications:admin_upload_encode_json" %}', {
-    method: 'POST',
-    headers: { 'X-CSRFToken': csrfToken },
-    body: form,
-  })
-  .then(async (r) => {
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || !data.ok) {
-      throw new Error(data.message || `HTTP ${r.status}`);
+  // Use XHR for real upload progress events.
+  const xhr = new XMLHttpRequest();
+  let importTick = null;
+  let importProgress = 50;
+
+  xhr.open('POST', '{% url "publications:admin_upload_encode_json" %}', true);
+  xhr.setRequestHeader('X-CSRFToken', csrfToken);
+
+  xhr.upload.onprogress = (evt) => {
+    if (!evt.lengthComputable) return;
+    // Upload occupies 0-50%.
+    const pct = (evt.loaded / evt.total) * 50;
+    setEncodeUploadProgress(pct, `Uploading... ${Math.round((evt.loaded / evt.total) * 100)}%`);
+  };
+
+  xhr.upload.onload = () => {
+    setEncodeUploadProgress(50, 'Upload complete. Importing...');
+    // Simulate import phase progress until server responds.
+    importTick = setInterval(() => {
+      importProgress = Math.min(95, importProgress + 2);
+      setEncodeUploadProgress(importProgress, `Importing... ${importProgress}%`);
+    }, 350);
+  };
+
+  xhr.onreadystatechange = () => {
+    if (xhr.readyState !== XMLHttpRequest.DONE) return;
+    if (importTick) clearInterval(importTick);
+
+    let data = {};
+    try { data = JSON.parse(xhr.responseText || '{}'); } catch {}
+
+    if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
+      const stats = data.stats || {};
+      const lines = [
+        data.message || 'Import complete.',
+        '',
+        ...Object.entries(stats).map(([k, v]) => `${k}: ${v}`),
+      ];
+      setEncodeUploadProgress(100, 'Done');
+      showEncodeUploadResult(lines.join('\n'));
+    } else {
+      const msg = data.message || `HTTP ${xhr.status}`;
+      setEncodeUploadProgress(100, 'Failed');
+      showEncodeUploadResult(`Upload failed: ${msg}`, true);
     }
-    const stats = data.stats || {};
-    const lines = [
-      data.message || 'Import complete.',
-      '',
-      ...Object.entries(stats).map(([k, v]) => `${k}: ${v}`),
-    ];
-    showEncodeUploadResult(lines.join('\n'));
-  })
-  .catch((err) => {
-    showEncodeUploadResult(`Upload failed: ${err.message || err}`, true);
-  })
-  .finally(() => {
     btn.disabled = false;
-  });
+  };
+
+  xhr.onerror = () => {
+    if (importTick) clearInterval(importTick);
+    setEncodeUploadProgress(100, 'Failed');
+    showEncodeUploadResult('Upload failed: network error', true);
+    btn.disabled = false;
+  };
+
+  xhr.send(form);
 }
 
 {% if status.running %}
