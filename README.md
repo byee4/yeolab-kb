@@ -101,7 +101,7 @@ python manage.py runserver
 
 **One-click update** (`/admin/`): Click update modes to run background jobs. Supported modes are `full`, `pubmed`, `geo`, `encode`, `methods`, and `analysis`. Progress and logs stream in real time.
 
-**Code Examples Editor** (`/admin/code-editor/`): Edit per-dataset JSON files used by the Analysis views. Save operations return the full local file path. Files are stored under `code_examples/{year}/{Mon}/{ACCESSION}.json`, with `locked: true` by default to prevent future Extract Analysis overwrites.
+**Code Examples Editor** (`/admin/code-editor/`): Edit per-dataset JSON files used by the Analysis views. In deployment, the web container clones/pulls `byee4/yeolab-publications-db` on startup and the editor reads/writes files under `/app/yeolab-publications-db/code_examples/{year}/{Mon}/{ACCESSION}.json`. Save operations return the full local file path. Files default to `locked: true` to prevent future Extract Analysis overwrites.
 
 **Add a publication** (`/admin/`): Enter a PubMed ID and click "Preview" to fetch metadata from PubMed. A summary (title, authors, journal, year, grants) is displayed for confirmation before inserting. If the PMID already exists, you're shown a link to the existing record.
 

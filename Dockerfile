@@ -9,6 +9,7 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
@@ -18,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+RUN chmod +x /app/scripts/start_web.sh
 
 # Collect static files
 RUN cd yeolab_search && python manage.py collectstatic --noinput 2>/dev/null || true
@@ -27,10 +29,4 @@ EXPOSE 8000
 
 # Run gunicorn from inside the Django project directory
 WORKDIR /app/yeolab_search
-CMD ["gunicorn", \
-     "--bind", "0.0.0.0:8000", \
-     "--workers", "4", \
-     "--timeout", "120", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "yeolab_search.wsgi:application"]
+CMD ["/app/scripts/start_web.sh"]

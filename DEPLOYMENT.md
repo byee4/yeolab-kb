@@ -52,6 +52,7 @@ When no `DATABASE_URL` is set, the app automatically uses SQLite at `../yeolab_p
 | `GITHUB_PAT` | Optional | (empty) | PAT for Code Examples Editor GitHub fetch/push |
 | `GITHUB_REPO` | Optional | `byee4/yeolab-publications-db` | Repo containing `code_examples/` JSON |
 | `GITHUB_BRANCH` | Optional | `main` | Branch containing `code_examples/` JSON |
+| `CODE_EXAMPLES_REPO_DIR` | Optional | `/app/yeolab-publications-db` | Local clone target for code examples repo |
 | `CODE_EXAMPLES_DIR` | Optional | auto-discovered | Override local `code_examples` directory |
 | `SECURE_SSL_REDIRECT` | No | `True` (prod) | Set `False` if LB handles SSL |
 
@@ -145,6 +146,16 @@ In the DO dashboard (or via CLI), set these app-level environment variables:
 - `GITHUB_PAT` (optional but recommended for Code Examples Editor GitHub sync/push)
 
 The `DATABASE_URL` is automatically injected by the managed database component.
+
+### Code Examples Repo Sync on Startup
+
+The web container startup script now performs:
+
+1. `git clone` of `GITHUB_REPO` (default `byee4/yeolab-publications-db`) into `CODE_EXAMPLES_REPO_DIR` if missing.
+2. `git fetch + reset --hard origin/<GITHUB_BRANCH>` if already cloned.
+3. Sets `CODE_EXAMPLES_DIR` to `<CODE_EXAMPLES_REPO_DIR>/code_examples` for runtime/editor reads and writes.
+
+This makes the Code Examples Editor operate on the checked-out repository copy inside the running app container.
 
 ### 3. Initialize the Database Schema
 
