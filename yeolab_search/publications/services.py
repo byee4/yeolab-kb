@@ -1291,6 +1291,106 @@ def _write_encode_steps_to_code_examples(accession, raw_text, steps, method_ids)
         _log(f"  Warning: failed to write code_examples for {accession}: {e}")
 
 
+def _resolve_encode_pipeline_pmid(cur, accession_id, pmids):
+    """
+    Resolve a valid PMID for an ENCODE accession so we can satisfy
+    analysis_pipelines.pmid NOT NULL + FK constraints.
+    """
+    # Prefer PMIDs attached from ENCODE references if they exist in publications.
+    for pmid in pmids or []:
+        cur.execute("SELECT pmid FROM publications WHERE pmid = %s", [pmid])
+        row = cur.fetchone()
+        if row:
+            return row[0]
+
+    # Fall back to any already linked publication for this accession.
+    cur.execute(
+        """SELECT pd.pmid
+           FROM publication_datasets pd
+           WHERE pd.accession_id = %s
+           ORDER BY pd.pmid
+           LIMIT 1""",
+        [accession_id],
+    )
+    row = cur.fetchone()
+    if row:
+        return row[0]
+    return None
+
+
+def _load_encode_backfill_candidates():
+    """
+    Load existing ENCODE experiment accessions from DB for metadata backfill.
+    This lets ENCODE bulk update backfill processing steps for prior ENCSR rows.
+    """
+    candidates = {}
+    with connection.cursor() as cur:
+        cur.execute(
+            """SELECT accession_id, accession, title, summary, experiment_types
+               FROM dataset_accessions
+               WHERE database = 'ENCODE' AND accession LIKE 'ENCSR%'"""
+        )
+        rows = cur.fetchall()
+        for accession_id, accession, title, summary, experiment_types in rows:
+            assay_title = ""
+            if experiment_types:
+                try:
+                    parsed = json.loads(experiment_types)
+                    if isinstance(parsed, list) and parsed:
+                        assay_title = str(parsed[0]).strip()
+                    elif isinstance(parsed, str):
+                        assay_title = parsed.strip()
+                except Exception:
+                    assay_title = str(experiment_types).strip()
+            candidates[accession] = {
+                "accession": accession,
+                "accession_id": accession_id,
+                "assay_title": assay_title,
+                "description": (summary or title or "").strip(),
+                "biosample_summary": "",
+                "pmids": [],
+                "_files": [],
+            }
+
+        if not candidates:
+            return candidates
+
+        ids = [item["accession_id"] for item in candidates.values()]
+        placeholders = ",".join(["%s"] * len(ids))
+        cur.execute(
+            f"""SELECT accession_id, file_name, file_type
+                FROM dataset_files
+                WHERE accession_id IN ({placeholders})""",
+            ids,
+        )
+        for accession_id, file_name, file_type in cur.fetchall():
+            target = None
+            for item in candidates.values():
+                if item["accession_id"] == accession_id:
+                    target = item
+                    break
+            if target is None:
+                continue
+            entry = {}
+            file_name = (file_name or "").strip()
+            file_type = (file_type or "").strip()
+            if file_name and "." in file_name:
+                entry["file_format"] = file_name.rsplit(".", 1)[-1]
+            if file_type:
+                entry["output_type"] = file_type.split(";", 1)[0].strip()
+                if "mapping assembly:" in file_type.lower():
+                    for part in file_type.split(";"):
+                        if part.lower().strip().startswith("mapping assembly:"):
+                            entry["mapping_assembly"] = part.split(":", 1)[-1].strip()
+                elif "assembly:" in file_type.lower():
+                    for part in file_type.split(";"):
+                        if part.lower().strip().startswith("assembly:"):
+                            entry["assembly"] = part.split(":", 1)[-1].strip()
+            target["_files"].append(entry)
+
+    return candidates
+
+
 def _run_encode_update(grant_list, skip_files, skip_details):
     """Background worker for ENCODE update."""
     try:
@@ -1298,6 +1398,14 @@ def _run_encode_update(grant_list, skip_files, skip_details):
         total_experiments = 0
         total_files_added = 0
         total_links = 0
+        encode_pipeline_count = 0
+        encode_step_count = 0
+        encode_pipeline_skipped_no_pmid = 0
+        encode_json_synced = 0
+
+        # Ensure analysis/method tables are present when ENCODE update runs standalone.
+        _ensure_pipeline_tables()
+        _ensure_methods_tables()
 
         # Step 1: Find experiments for each grant
         all_experiments = {}  # accession -> experiment dict
@@ -1569,12 +1677,26 @@ def _run_encode_update(grant_list, skip_files, skip_details):
 
         # Step 5: Build ENCODE processing pipelines from metadata.
         _log(f"[5/5] Building ENCODE metadata processing pipelines...")
-        method_ids = _get_method_ids()
-        encode_pipeline_count = 0
-        encode_step_count = 0
+        try:
+            method_ids = _get_method_ids()
+        except Exception:
+            method_ids = {}
+
+        # Include existing ENCODE rows so processing steps are backfilled, not only newly fetched rows.
+        processing_experiments = dict(all_experiments)
+        for acc, existing_exp in _load_encode_backfill_candidates().items():
+            processing_experiments.setdefault(acc, existing_exp)
+
         with connection.cursor() as cur:
-            for acc, exp in all_experiments.items():
+            for acc, exp in processing_experiments.items():
                 acc_id = exp.get("accession_id")
+                if not acc_id:
+                    cur.execute(
+                        "SELECT accession_id FROM dataset_accessions WHERE accession = %s",
+                        [acc],
+                    )
+                    row = cur.fetchone()
+                    acc_id = row[0] if row else None
                 if not acc_id:
                     continue
                 steps, raw_text = _extract_encode_processing_steps(
@@ -1583,6 +1705,19 @@ def _run_encode_update(grant_list, skip_files, skip_details):
                     files=exp.get("_files") or [],
                 )
                 if not steps:
+                    continue
+
+                _write_encode_steps_to_code_examples(
+                    accession=acc,
+                    raw_text=raw_text,
+                    steps=steps,
+                    method_ids=method_ids,
+                )
+                encode_json_synced += 1
+
+                pipeline_pmid = _resolve_encode_pipeline_pmid(cur, acc_id, exp.get("pmids", []))
+                if not pipeline_pmid:
+                    encode_pipeline_skipped_no_pmid += 1
                     continue
 
                 # Refresh ENCODE-derived pipeline for this accession on each bulk update.
@@ -1603,7 +1738,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
                 pipeline_title = f"{acc} Data Processing"
                 pid = _insert_pipeline(
                     cur=cur,
-                    pmid=None,
+                    pmid=pipeline_pmid,
                     accession_id=acc_id,
                     assay_type=exp.get("assay_title", ""),
                     title=pipeline_title,
@@ -1616,13 +1751,6 @@ def _run_encode_update(grant_list, skip_files, skip_details):
                 if pid:
                     encode_pipeline_count += 1
                     encode_step_count += len(steps)
-
-                _write_encode_steps_to_code_examples(
-                    accession=acc,
-                    raw_text=raw_text,
-                    steps=steps,
-                    method_ids=method_ids,
-                )
 
         # Collect final stats
         with connection.cursor() as cur:
@@ -1638,12 +1766,15 @@ def _run_encode_update(grant_list, skip_files, skip_details):
             stats["encode_datasets"] = cur.fetchone()[0]
             stats["encode_pipelines"] = encode_pipeline_count
             stats["encode_pipeline_steps"] = encode_step_count
+            stats["encode_pipeline_skipped_no_pmid"] = encode_pipeline_skipped_no_pmid
+            stats["encode_json_synced"] = encode_json_synced
 
         _set_status(stats=stats)
         _log(
             f"ENCODE update complete! {total_experiments} experiments, "
             f"{total_files_added} files, {total_links} links, "
-            f"{encode_pipeline_count} processing pipelines."
+            f"{encode_pipeline_count} processing pipelines, "
+            f"{encode_json_synced} JSON files synced."
         )
 
         # Log the update
