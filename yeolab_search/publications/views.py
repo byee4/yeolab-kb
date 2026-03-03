@@ -1460,6 +1460,40 @@ def admin_update_status(request):
 @login_required
 @require_POST
 @csrf_protect
+def admin_upload_encode_json(request):
+    """Upload ENCODE Experiment search JSON and import experiments/processing steps."""
+    from . import services
+
+    upload = request.FILES.get("json_file")
+    if not upload:
+        return JsonResponse({"ok": False, "message": "Missing file field 'json_file'."}, status=400)
+
+    filename = (upload.name or "").lower()
+    if not filename.endswith(".json"):
+        return JsonResponse({"ok": False, "message": "Please upload a .json file."}, status=400)
+
+    try:
+        payload = json.loads(upload.read().decode("utf-8"))
+    except Exception as exc:
+        return JsonResponse({"ok": False, "message": f"Invalid JSON file: {exc}"}, status=400)
+
+    grant_label = request.POST.get("grant_label", "").strip() or "uploaded_json"
+    try:
+        stats = services.import_encode_experiments_from_search_payload(payload, grant_label=grant_label)
+        return JsonResponse({
+            "ok": True,
+            "message": "ENCODE JSON uploaded and imported.",
+            "stats": stats,
+        })
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "message": str(exc)}, status=400)
+    except Exception as exc:
+        return JsonResponse({"ok": False, "message": f"Upload import failed: {exc}"}, status=500)
+
+
+@login_required
+@require_POST
+@csrf_protect
 def admin_preview_add(request):
     """Preview what will be added for a PMID (fetches from PubMed without inserting)."""
     from . import services

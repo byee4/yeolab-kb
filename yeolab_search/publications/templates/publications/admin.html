@@ -75,6 +75,29 @@
   </div>
 </div>
 
+<!-- ENCODE JSON Upload -->
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Upload ENCODE Experiment JSON</h2>
+  <p class="text-sm text-gray-600 mb-4">
+    Upload a JSON file exported from ENCODE search (for example:
+    <code class="bg-gray-100 px-1 rounded text-xs">/search/?type=Experiment&amp;format=json&amp;limit=all&amp;award.name=U41HG009889</code>).
+    The importer will parse experiments, link datasets/publications, and sync processing-step analysis.
+  </p>
+  <div class="grid md:grid-cols-4 gap-2">
+    <input type="file" id="encode-json-file" accept=".json,application/json"
+           class="md:col-span-2 px-3 py-2 border border-gray-300 rounded text-sm bg-white">
+    <input type="text" id="encode-grant-label" placeholder="Optional label (e.g. U41HG009889)"
+           class="md:col-span-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+    <button onclick="uploadEncodeJson()" id="btn-encode-upload"
+            class="md:col-span-1 px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50">
+      Upload JSON
+    </button>
+  </div>
+  <div id="encode-upload-result" class="mt-4 hidden">
+    <pre id="encode-upload-output" class="bg-gray-50 rounded border p-3 text-xs font-mono text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
+  </div>
+</div>
+
 <!-- Code Examples Sync -->
 <div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
   <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Code Examples</h2>
@@ -203,6 +226,15 @@ function postJSON(url, body) {
   }).then(r => r.json());
 }
 
+function showEncodeUploadResult(text, isError=false) {
+  const box = document.getElementById('encode-upload-result');
+  const out = document.getElementById('encode-upload-output');
+  box.classList.remove('hidden');
+  out.textContent = text;
+  out.className = 'bg-gray-50 rounded border p-3 text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto ' +
+    (isError ? 'text-red-700 border-red-200 bg-red-50' : 'text-gray-600');
+}
+
 // =============================================
 // Bulk Update
 // =============================================
@@ -257,6 +289,50 @@ function pollStatus() {
       }
     }
   }).catch(() => {});
+}
+
+function uploadEncodeJson() {
+  const fileInput = document.getElementById('encode-json-file');
+  const labelInput = document.getElementById('encode-grant-label');
+  const btn = document.getElementById('btn-encode-upload');
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    showEncodeUploadResult('Please choose a JSON file first.', true);
+    return;
+  }
+
+  const form = new FormData();
+  form.append('json_file', file);
+  const label = (labelInput.value || '').trim();
+  if (label) form.append('grant_label', label);
+
+  btn.disabled = true;
+  showEncodeUploadResult('Uploading and importing ENCODE JSON...');
+
+  fetch('{% url "publications:admin_upload_encode_json" %}', {
+    method: 'POST',
+    headers: { 'X-CSRFToken': csrfToken },
+    body: form,
+  })
+  .then(async (r) => {
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) {
+      throw new Error(data.message || `HTTP ${r.status}`);
+    }
+    const stats = data.stats || {};
+    const lines = [
+      data.message || 'Import complete.',
+      '',
+      ...Object.entries(stats).map(([k, v]) => `${k}: ${v}`),
+    ];
+    showEncodeUploadResult(lines.join('\n'));
+  })
+  .catch((err) => {
+    showEncodeUploadResult(`Upload failed: ${err.message || err}`, true);
+  })
+  .finally(() => {
+    btn.disabled = false;
+  });
 }
 
 {% if status.running %}
