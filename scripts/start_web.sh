@@ -5,6 +5,9 @@ REPO_SLUG="${GITHUB_REPO:-byee4/yeolab-publications-db}"
 REPO_BRANCH="${GITHUB_BRANCH:-main}"
 REPO_DIR="${CODE_EXAMPLES_REPO_DIR:-/app/yeolab-publications-db}"
 CODE_EXAMPLES_PATH="${REPO_DIR}/code_examples"
+GUNICORN_WORKERS="${GUNICORN_WORKERS:-4}"
+GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-600}"
+GUNICORN_BIND="${GUNICORN_BIND:-0.0.0.0:8000}"
 export GIT_TERMINAL_PROMPT=0
 
 sync_repo() {
@@ -43,9 +46,9 @@ fi
 
 cd /app/yeolab_search
 exec gunicorn \
-  --bind 0.0.0.0:8000 \
-  --workers 4 \
-  --timeout 120 \
+  --bind "${GUNICORN_BIND}" \
+  --workers "${GUNICORN_WORKERS}" \
+  --timeout "${GUNICORN_TIMEOUT}" \
   --access-logfile - \
   --error-logfile - \
   yeolab_search.wsgi:application

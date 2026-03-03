@@ -54,6 +54,7 @@ When no `DATABASE_URL` is set, the app automatically uses SQLite at `../yeolab_p
 | `GITHUB_BRANCH` | Optional | `main` | Branch containing `code_examples/` JSON |
 | `CODE_EXAMPLES_REPO_DIR` | Optional | `/app/yeolab-publications-db` | Local clone target for code examples repo |
 | `CODE_EXAMPLES_DIR` | Optional | auto-discovered | Override local `code_examples` directory |
+| `GUNICORN_TIMEOUT` | Optional | `600` | Worker timeout in seconds (increase to avoid chat SSE disconnects) |
 | `SECURE_SSL_REDIRECT` | No | `True` (prod) | Set `False` if LB handles SSL |
 
 Copy `.env.example` to `.env` and fill in your values for local Docker development.
