@@ -1906,6 +1906,11 @@ def healthz(request):
         )
 
 
+def custom_404(request, exception=None):
+    """Global custom 404 page."""
+    return render(request, "publications/404.html", status=404)
+
+
 # ============================================================
 # Chat views
 # ============================================================
@@ -2274,8 +2279,15 @@ def analysis_detail_by_accession(request, accession):
 
     steps = get_steps_for_dataset(accession)
     if steps is None:
-        from django.http import Http404
-        raise Http404(f"No code examples found for {accession}")
+        return render(
+            request,
+            "publications/404.html",
+            {
+                "missing_accession": accession,
+                "missing_context": "analysis",
+            },
+            status=404,
+        )
 
     # Lookup DB info for this accession
     pub_info = {}

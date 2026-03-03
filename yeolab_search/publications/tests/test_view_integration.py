@@ -184,6 +184,13 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
             response = views.healthz(self.rf.get("/healthz/"))
         self.assertEqual(response.status_code, 503)
 
+    def test_analysis_detail_by_accession_missing_returns_custom_404(self):
+        request = self.rf.get("/analysis/dataset/ENCSR519QAA/")
+        with patch("publications.code_examples.get_steps_for_dataset", return_value=None):
+            response = views.analysis_detail_by_accession(request, "ENCSR519QAA")
+        self.assertEqual(response.status_code, 404)
+        self.assertIn(b"No analysis content is currently available", response.content)
+
     @patch("publications.services.import_encode_experiments_from_search_payload")
     def test_admin_upload_encode_json_imports_payload(self, import_mock):
         import_mock.return_value = {"experiments_loaded": 1}
