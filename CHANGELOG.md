@@ -14,3 +14,4 @@
 - Added resumable ENCODE JSON batch import for uploaded payloads to avoid long blocking requests/timeouts (e.g., HTTP 524), with persisted checkpoint state by upload ID and automatic resume from the last completed batch.
 - Added ENCODE upload progress details in admin status, including batch counters and a rolling list of recently imported experiment accessions during import.
 - Updated ENCODE upload import parsing to fetch each uploaded accession from live ENCODE experiment JSON (`/experiments/<accession>/?format=json`) plus file metadata before deriving processing steps.
+- Refined ENCODE upload progress tracking to checkpoint and publish status per dataset (per accession), including `completed_experiments/total_experiments`, current accession, and recently parsed datasets.
