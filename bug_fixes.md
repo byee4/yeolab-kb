@@ -187,26 +187,22 @@ Additionally, registry load had a write-on-read side effect: when `locked` was m
 
 ---
 
-## 2026-03-03 — Globus Login Hardening (Redirect URI + Scope Stability)
+## 2026-03-03 — Globus Login Recovery on Token Endpoint 5xx
 
 ### Symptom
 
-Production login via `/login/globus/` intermittently failed at callback (`/complete/globus/`) with token exchange errors.
+Some normal browser sessions failed during `/complete/globus/` with provider-side token endpoint 5xx errors.
 
-### Changes
+### Fix
 
-1. Enabled explicit callback override via environment variable:
-   - `SOCIAL_AUTH_GLOBUS_REDIRECT_URI`
+Updated `yeolab_search.middleware.GlobusDebugMiddleware` to add a safe recovery path:
 
-2. Kept OAuth scope behavior deterministic:
-   - `SOCIAL_AUTH_GLOBUS_IGNORE_DEFAULT_SCOPE = True`
-
-3. Normalized login URL setting:
-   - `LOGIN_URL = '/login/globus/'`
-
-4. Documented deployment env var in `.env.example`:
-   - `SOCIAL_AUTH_GLOBUS_REDIRECT_URI=https://yourdomain.com/complete/globus/`
+- If `/complete/globus/` raises `requests.exceptions.HTTPError` with status `>= 500`,
+  automatically:
+  1. logs out the user
+  2. flushes session state
+  3. redirects to `/login/globus/?oauth_retry=1`
 
 ### Result
 
-The app now supports an explicit, exact redirect URI configuration in production environments and avoids accidental scope expansion differences during provider authorization.
+Users can recover from transient provider-side failures by being routed into a clean re-auth flow, instead of landing on a hard 500 page.
