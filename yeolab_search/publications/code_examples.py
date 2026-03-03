@@ -39,6 +39,8 @@ def month_abbr(month_int: int) -> str:
 # ---------------------------------------------------------------------------
 
 _DIR_PATHS = [
+    # 0. Deployment clone target (synced from byee4/yeolab-publications-db)
+    "/app/yeolab-publications-db/code_examples",
     # 1. Docker / deployed: alongside the Django project
     os.path.join(os.path.dirname(__file__), "..", "..", "code_examples"),
     # 2. Development: repo root
