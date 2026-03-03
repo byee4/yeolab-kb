@@ -88,8 +88,16 @@
            class="md:col-span-2 px-3 py-2 border border-gray-300 rounded text-sm bg-white">
     <input type="text" id="encode-grant-label" placeholder="Optional label (e.g. U41HG009889)"
            class="md:col-span-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+    <input type="number" id="encode-batch-size" value="50" min="1" max="500"
+           class="md:col-span-1 px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky"
+           title="Batch size">
+  </div>
+  <div class="grid md:grid-cols-4 gap-2 mt-2">
+    <div class="md:col-span-3 text-xs text-gray-500 self-center">
+      Batch import runs in the background. If interrupted, re-uploading the same JSON resumes from the last completed batch.
+    </div>
     <button onclick="uploadEncodeJson()" id="btn-encode-upload"
-            class="md:col-span-1 px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50">
+            class="md:col-span-1 px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50 justify-self-end">
       Upload JSON
     </button>
   </div>
@@ -219,6 +227,7 @@
 <script>
 const csrfToken = '{{ csrf_token }}';
 let pollInterval = null;
+let encodeImportPollInterval = null;
 
 function escapeHtml(text) {
   const d = document.createElement('div');
@@ -334,6 +343,7 @@ function pollStatus() {
 function uploadEncodeJson() {
   const fileInput = document.getElementById('encode-json-file');
   const labelInput = document.getElementById('encode-grant-label');
+  const batchInput = document.getElementById('encode-batch-size');
   const btn = document.getElementById('btn-encode-upload');
   const file = fileInput.files && fileInput.files[0];
   if (!file) {
@@ -345,6 +355,8 @@ function uploadEncodeJson() {
   form.append('json_file', file);
   const label = (labelInput.value || '').trim();
   if (label) form.append('grant_label', label);
+  const batchSize = parseInt((batchInput.value || '50').trim(), 10);
+  if (Number.isFinite(batchSize) && batchSize > 0) form.append('batch_size', String(batchSize));
 
   btn.disabled = true;
   showEncodeUploadResult('Uploading and importing ENCODE JSON...');
@@ -353,9 +365,7 @@ function uploadEncodeJson() {
 
   // Use XHR for real upload progress events.
   const xhr = new XMLHttpRequest();
-  let importTick = null;
   let importProgress = 52;
-  const startedAt = Date.now();
 
   xhr.open('POST', '{% url "publications:admin_upload_encode_json" %}', true);
   xhr.setRequestHeader('X-CSRFToken', csrfToken);
@@ -370,48 +380,34 @@ function uploadEncodeJson() {
   xhr.upload.onload = () => {
     setEncodeUploadStage('upload', 'done');
     setEncodeUploadStage('import', 'active');
-    setEncodeUploadProgress(50, 'Upload complete. Importing...');
-    // Simulate import phase progress until server responds.
-    importTick = setInterval(() => {
-      importProgress = Math.min(94, importProgress + (importProgress < 80 ? 3 : 1));
-      const elapsed = Math.round((Date.now() - startedAt) / 1000);
-      setEncodeUploadProgress(importProgress, `Importing ENCODE experiments... ${importProgress}% (${elapsed}s)`);
-    }, 300);
+    setEncodeUploadProgress(50, 'Upload complete. Starting background import...');
   };
 
   xhr.onreadystatechange = () => {
     if (xhr.readyState !== XMLHttpRequest.DONE) return;
-    if (importTick) clearInterval(importTick);
 
     let data = {};
     try { data = JSON.parse(xhr.responseText || '{}'); } catch {}
 
     if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
-      const stats = data.stats || {};
-      setEncodeUploadStage('import', 'done');
-      setEncodeUploadStage('finalize', 'active');
-      const summary = `Loaded ${stats.experiments_loaded ?? 0} experiments; synced ${stats.encode_json_synced ?? 0} JSON files; created ${stats.encode_pipelines ?? 0} pipelines.`;
-      const lines = [
-        data.message || 'Import complete.',
-        summary,
-        '',
-        ...Object.entries(stats).map(([k, v]) => `${k}: ${v}`),
-      ];
-      setEncodeUploadStage('finalize', 'done');
-      setEncodeUploadProgress(100, 'Done');
-      showEncodeUploadResult(lines.join('\n'));
+      const uploadId = data.upload_id || '';
+      const resumeBatch = data.resume_from_batch || 0;
+      const total = data.total_experiments || 0;
+      showEncodeUploadResult(
+        `${data.message || 'Import started.'}\nupload_id: ${uploadId}\nresume_from_batch: ${resumeBatch}\ntotal_experiments: ${total}\n\nWaiting for import progress...`
+      );
+      startEncodeUploadStatusPolling(uploadId);
     } else {
       const msg = data.message || `HTTP ${xhr.status}`;
       const failedStage = importProgress >= 50 ? 'import' : 'upload';
       setEncodeUploadStage(failedStage, 'error');
       setEncodeUploadProgress(100, 'Failed');
       showEncodeUploadResult(`Upload failed: ${msg}`, true);
+      btn.disabled = false;
     }
-    btn.disabled = false;
   };
 
   xhr.onerror = () => {
-    if (importTick) clearInterval(importTick);
     const failedStage = importProgress >= 50 ? 'import' : 'upload';
     setEncodeUploadStage(failedStage, 'error');
     setEncodeUploadProgress(100, 'Failed');
@@ -420,6 +416,69 @@ function uploadEncodeJson() {
   };
 
   xhr.send(form);
+}
+
+function startEncodeUploadStatusPolling(expectedUploadId) {
+  if (encodeImportPollInterval) clearInterval(encodeImportPollInterval);
+  const btn = document.getElementById('btn-encode-upload');
+  btn.disabled = true;
+
+  const tick = () => {
+    fetch('{% url "publications:admin_update_status" %}')
+      .then(r => r.json())
+      .then(data => {
+        const stats = data.stats || {};
+        const statusUploadId = stats.upload_id || expectedUploadId || '';
+        const totalBatches = Number(stats.total_batches || 0);
+        const completedBatches = Number(stats.completed_batches || 0);
+        const basePct = 50;
+        let pct = basePct;
+        if (totalBatches > 0) {
+          pct = basePct + Math.min(49, Math.round((completedBatches / totalBatches) * 49));
+        }
+        setEncodeUploadStage('import', 'active');
+        setEncodeUploadProgress(
+          pct,
+          `Importing batch ${completedBatches}/${totalBatches || '?'} (${statusUploadId || 'pending id'})`
+        );
+
+        const recent = stats.imported_accessions_recent || [];
+        const lines = [
+          data.progress || 'Importing...',
+          '',
+          `upload_id: ${statusUploadId || '-'}`,
+          `completed_batches: ${completedBatches}/${totalBatches || '-'}`,
+          `experiments_loaded: ${stats.experiments_loaded ?? '-'}`,
+          `encode_json_synced: ${stats.encode_json_synced ?? '-'}`,
+          `encode_pipelines: ${stats.encode_pipelines ?? '-'}`,
+          '',
+          'Recently imported experiments:',
+          ...(recent.length ? recent.map(acc => `- ${acc}`) : ['- (waiting...)']),
+        ];
+        showEncodeUploadResult(lines.join('\n'));
+
+        if (!data.running) {
+          clearInterval(encodeImportPollInterval);
+          encodeImportPollInterval = null;
+          if (data.error) {
+            setEncodeUploadStage('import', 'error');
+            setEncodeUploadProgress(100, 'Failed');
+            lines.unshift(`ERROR: ${data.error}`);
+            showEncodeUploadResult(lines.join('\n'), true);
+          } else {
+            setEncodeUploadStage('import', 'done');
+            setEncodeUploadStage('finalize', 'active');
+            setEncodeUploadProgress(100, 'Finalized');
+            setEncodeUploadStage('finalize', 'done');
+          }
+          btn.disabled = false;
+        }
+      })
+      .catch(() => {});
+  };
+
+  tick();
+  encodeImportPollInterval = setInterval(tick, 1500);
 }
 
 {% if status.running %}
