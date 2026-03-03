@@ -1085,6 +1085,41 @@ def _encode_search_experiments_for_grant(grant):
     return []
 
 
+def _encode_fetch_experiment_and_files(accession):
+    """
+    Fetch full ENCODE experiment metadata and related file metadata for one accession.
+    Returns (detail_dict, files_list).
+    """
+    acc = str(accession or "").strip()
+    if not acc:
+        return {}, []
+
+    detail = _encode_api_get(
+        f"{ENCODE_BASE_URL}/experiments/{acc}/",
+        params={"format": "json"},
+        label=f"experiment {acc}",
+    )
+    files = _encode_search(
+        "File",
+        {
+            "dataset": f"/experiments/{acc}/",
+            "field": [
+                "accession",
+                "file_format",
+                "output_type",
+                "file_size",
+                "href",
+                "assembly",
+                "mapping_assembly",
+                "genome_annotation",
+                "mapped_by",
+                "md5sum",
+            ],
+        },
+    )
+    return (detail if isinstance(detail, dict) else {}), (files if isinstance(files, list) else [])
+
+
 def _encode_upload_state_dir():
     path = os.path.join(tempfile.gettempdir(), "yeolab_encode_import")
     os.makedirs(path, exist_ok=True)
@@ -1877,7 +1912,12 @@ def _run_encode_update(grant_list, skip_files, skip_details):
         _set_status(running=False, finished_at=datetime.now().isoformat())
 
 
-def import_encode_experiments_from_search_payload(payload, grant_label="uploaded_json", include_backfill=True):
+def import_encode_experiments_from_search_payload(
+    payload,
+    grant_label="uploaded_json",
+    include_backfill=True,
+    fetch_live_details=True,
+):
     """
     Import ENCODE experiments from a pre-downloaded ENCODE search JSON payload.
 
@@ -1885,11 +1925,14 @@ def import_encode_experiments_from_search_payload(payload, grant_label="uploaded
       {"@graph": [ ... Experiment objects ... ]}
     or directly a list of Experiment objects.
 
-    This path avoids ENCODE API calls and still performs:
+    This path performs:
       - dataset insertion/linking
       - ENCODE processing-step extraction
       - analysis pipeline insertion (when PMID can be resolved)
       - code_examples JSON sync/backfill
+
+    By default, each uploaded accession is enriched from ENCODE API detail/file
+    endpoints so processing steps are derived from fresh experiment metadata.
     """
     if isinstance(payload, dict):
         graph = payload.get("@graph", [])
@@ -1901,6 +1944,10 @@ def import_encode_experiments_from_search_payload(payload, grant_label="uploaded
     if not isinstance(graph, list):
         raise ValueError("Invalid ENCODE payload: '@graph' must be a list.")
 
+    if fetch_live_details and not _HAS_REQUESTS:
+        _log("  Warning: requests is unavailable; falling back to uploaded ENCODE payload metadata only.")
+        fetch_live_details = False
+
     all_experiments = {}
     for exp in graph:
         if not isinstance(exp, dict):
@@ -1908,11 +1955,21 @@ def import_encode_experiments_from_search_payload(payload, grant_label="uploaded
         acc = (exp.get("accession") or "").strip()
         if not acc or acc in all_experiments:
             continue
-        parsed = _parse_encode_experiment(exp, grant_label)
-        parsed["_detail"] = exp
-        # Use embedded files if present; otherwise keep empty.
-        files = exp.get("files", [])
-        parsed["_files"] = files if isinstance(files, list) else []
+        exp_detail = exp
+        exp_files = exp.get("files", []) if isinstance(exp.get("files", []), list) else []
+        if fetch_live_details:
+            try:
+                live_detail, live_files = _encode_fetch_experiment_and_files(acc)
+                if live_detail:
+                    exp_detail = live_detail
+                if live_files:
+                    exp_files = live_files
+            except Exception as e:
+                _log(f"  Warning: live ENCODE fetch failed for {acc}; using uploaded payload metadata. ({e})")
+
+        parsed = _parse_encode_experiment(exp_detail, grant_label)
+        parsed["_detail"] = exp_detail
+        parsed["_files"] = exp_files
         all_experiments[acc] = parsed
 
     total_experiments = len(all_experiments)

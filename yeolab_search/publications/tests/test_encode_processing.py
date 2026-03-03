@@ -6,6 +6,23 @@ from publications import services
 
 
 class EncodeProcessingExtractionTests(SimpleTestCase):
+    def test_encode_fetch_experiment_and_files_queries_live_endpoints(self):
+        with (
+            patch("publications.services._encode_api_get", return_value={"accession": "ENCSR423ERM"}) as api_get,
+            patch("publications.services._encode_search", return_value=[{"accession": "ENCFF000AAA"}]) as search,
+        ):
+            detail, files = services._encode_fetch_experiment_and_files("ENCSR423ERM")
+
+        self.assertEqual(detail.get("accession"), "ENCSR423ERM")
+        self.assertEqual(len(files), 1)
+        api_get.assert_called_once()
+        search.assert_called_once()
+
+    def test_encode_fetch_experiment_and_files_returns_empty_for_blank_accession(self):
+        detail, files = services._encode_fetch_experiment_and_files("")
+        self.assertEqual(detail, {})
+        self.assertEqual(files, [])
+
     def test_extract_encode_processing_steps_uses_detail_and_files(self):
         exp = {
             "accession": "ENCSR773ABC",
