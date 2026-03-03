@@ -148,19 +148,19 @@ SOCIAL_AUTH_GLOBUS_SCOPE = [
     'email',
     #'urn:globus:auth:scope:auth.globus.org:view_identities',
 ]
-SOCIAL_AUTH_GLOBUS_IGNORE_DEFAULT_SCOPE=True  # Don't request extra scopes like "view_identities" that require additional review/approval from Globus when registering the app. Only request the basic scopes needed for authentication.
+SOCIAL_AUTH_GLOBUS_IGNORE_DEFAULT_SCOPE = True  # Keep requested scopes minimal and deterministic.
 # In reverse-proxy environments (e.g., App Platform), force HTTPS callback
 # generation so OAuth redirect_uri exactly matches provider registration.
 SOCIAL_AUTH_REDIRECT_IS_HTTPS = not DEBUG
 
 # Optional explicit override for OAuth callback URL.
 # Example: https://yeolab-kb-stbkj.ondigitalocean.app/complete/globus/
-#SOCIAL_AUTH_GLOBUS_REDIRECT_URI = os.environ.get(
-#    'SOCIAL_AUTH_GLOBUS_REDIRECT_URI',
-#    '',
-#).strip()
+SOCIAL_AUTH_GLOBUS_REDIRECT_URI = os.environ.get(
+    'SOCIAL_AUTH_GLOBUS_REDIRECT_URI',
+    '',
+).strip()
 
-LOGIN_URL = '/login/globus'
+LOGIN_URL = '/login/globus/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 
