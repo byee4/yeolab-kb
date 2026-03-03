@@ -199,6 +199,80 @@ The `--schema` flag is optional if you've already created the schema. The script
 4. Populates full-text search vectors
 5. Validates row counts match between databases
 
+## Data Migration from Local Postgres to Remote
+
+**Project:** `yeolab-kb` / `yeolab_search`
+**Scope:** Local Docker (`yeolab_publications`) to DigitalOcean Managed DB
+
+### 1. Local Database Health Check (Docker)
+
+Before exporting, ensure all sequences are synchronized with the data to prevent primary key collisions on the remote server.
+
+#### Step A: Reset Sequences
+
+Create a file named `fix_seqs.sql` on your Mac and run it inside the container:
+
+```bash
+docker compose exec -T db psql -d yeolab_publications -U yeolab < fix_seqs.sql
+
+```
+
+* **Purpose:** Updates `last_value` for all sequences to match `MAX(id)` for every table in the `public` schema.
+
+#### Step B: Generate the "Perfect" Dump
+
+```bash
+docker compose exec db pg_dump -Fc --no-acl --no-owner -d yeolab_publications -U yeolab > yeolab_perfect_sync.dump
+
+```
+
+* **Flag `-Fc`:** Uses the compressed Custom format for faster, flexible restores.
+* **Flag `--no-owner`:** Prevents local username conflicts on DigitalOcean.
+
+### 2. Remote Database Preparation (DigitalOcean)
+
+To resolve the **"public" vs "yeolab"** schema discrepancy, the remote target must be completely cleared.
+
+### Step A: Wipe and Re-initialize
+
+Run this command using your `DATABASE_URL`:
+
+```bash
+psql "DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+```
+
+* **Critical:** This removes existing tables (like `authors`) that cause "relation already exists" errors during import.
+
+### 3. The Migration (Restore)
+
+Push the local binary dump to the remote server using `pg_restore`.
+
+```bash
+pg_restore -v --no-owner --no-privileges -d "DATABASE_URL" yeolab_perfect_sync.dump
+
+```
+
+* **Outcome:** All tables are restored into the `public` schema, which is where the web app expects them by default.
+
+### 4. Troubleshooting Reference
+
+| Issue | Likely Cause | Resolution |
+| --- | --- | --- |
+| **"relation already exists"** | Residual tables in `public` schema. | Run `DROP SCHEMA public CASCADE`. |
+| **"column does not exist"** | Schema drift/outdated dump. | Verify columns (e.g., `source_gse`) or re-export. |
+| **"OCI runtime failed"** | Docker volume mount conflict. | Check `docker-compose.yml` for file vs. folder mount errors. |
+| **Missing SRA Data** | Different schemas (`yeolab` vs `public`). | Restore specifically into the `public` schema. |
+
+### 5. Final Verification Query
+
+Run this to confirm that **GSE72502** now correctly shows 30 experiments in production:
+
+```bash
+psql "DATABASE_URL" -c "SELECT count(*) FROM sra_experiments WHERE source_gse = 'GSE72502';"
+
+```
+
 ## Post-Deploy Schema Safety
 
 This app uses unmanaged models for most domain tables, plus Django-managed auth/session tables. After deploy, run:
