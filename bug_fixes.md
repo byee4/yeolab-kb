@@ -184,3 +184,29 @@ Additionally, registry load had a write-on-read side effect: when `locked` was m
 - Dataset and analysis views now read consistent, current JSON-backed processing steps.
 - Viewing pages no longer causes implicit JSON rewrites.
 - Step data is no longer "clobbered" by cross-worker stale cache reads.
+
+---
+
+## 2026-03-03 — Globus Login Hardening (Redirect URI + Scope Stability)
+
+### Symptom
+
+Production login via `/login/globus/` intermittently failed at callback (`/complete/globus/`) with token exchange errors.
+
+### Changes
+
+1. Enabled explicit callback override via environment variable:
+   - `SOCIAL_AUTH_GLOBUS_REDIRECT_URI`
+
+2. Kept OAuth scope behavior deterministic:
+   - `SOCIAL_AUTH_GLOBUS_IGNORE_DEFAULT_SCOPE = True`
+
+3. Normalized login URL setting:
+   - `LOGIN_URL = '/login/globus/'`
+
+4. Documented deployment env var in `.env.example`:
+   - `SOCIAL_AUTH_GLOBUS_REDIRECT_URI=https://yourdomain.com/complete/globus/`
+
+### Result
+
+The app now supports an explicit, exact redirect URI configuration in production environments and avoids accidental scope expansion differences during provider authorization.
