@@ -6,6 +6,30 @@ from publications import services
 
 
 class EncodeProcessingExtractionTests(SimpleTestCase):
+    def test_encode_flatten_processing_lines_emits_one_line_per_file(self):
+        files = [
+            {
+                "accession": "ENCFF000AAA",
+                "file_format": "bam",
+                "output_type": "alignments",
+                "mapping_assembly": "hg38",
+                "biological_replicates": [1, 2],
+                "quality_metrics": [{"pct_duplicate_reads": 12.3}],
+                "analysis_step_version": {
+                    "analysis_step": {"name": "align-star"},
+                    "software_versions": [
+                        {"software": {"name": "STAR"}, "version": "2.7.10a"},
+                    ],
+                },
+            }
+        ]
+        lines = services._encode_flatten_processing_lines({}, detail={}, files=files)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("ENCFF000AAA.bam", lines[0])
+        self.assertIn("align-star", lines[0])
+        self.assertIn("STAR(2.7.10a)", lines[0])
+        self.assertIn("assembly=hg38", lines[0])
+
     def test_encode_fetch_experiment_and_files_queries_live_endpoints(self):
         with (
             patch("publications.services._encode_api_get", return_value={"accession": "ENCSR423ERM"}) as api_get,

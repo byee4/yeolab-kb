@@ -1480,11 +1480,15 @@ def admin_upload_encode_json(request):
 
     grant_label = request.POST.get("grant_label", "").strip() or "uploaded_json"
     batch_size = request.POST.get("batch_size", "").strip() or "50"
+    override_existing = str(request.POST.get("override_existing", "")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     try:
         started = services.start_encode_json_upload_import(
             payload=payload,
             grant_label=grant_label,
             batch_size=int(batch_size),
+            override_existing=override_existing,
         )
         if not started.get("ok"):
             return JsonResponse(
