@@ -3,14 +3,14 @@
 {% block title %}Search — Yeo Lab Publications{% endblock %}
 
 {% block content %}
-<h1 class="text-xl font-bold text-ucsd-blue mb-4">Search Publications</h1>
+<h1 class="text-xl font-bold text-ucsd-blue mb-4">Search</h1>
 
 <!-- Search form -->
 <form method="get" class="bg-white rounded-lg shadow-sm border p-4 mb-6">
   <div class="grid md:grid-cols-4 gap-3">
     <div class="md:col-span-2">
       <label class="block text-xs font-medium text-gray-500 mb-1">Keywords</label>
-      <input type="text" name="q" value="{{ query }}" placeholder="Title, abstract, journal…"
+      <input type="text" name="q" value="{{ query }}" placeholder="Publications, datasets, analyses…"
              class="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
     </div>
     <div>
@@ -53,9 +53,9 @@
   </div>
 </form>
 
-<!-- Results -->
+<!-- Publications -->
 <div class="text-sm text-gray-500 mb-3">
-  {{ total }} result{{ total|pluralize }} found
+  Publications: {{ total }} result{{ total|pluralize }}
   {% if query %}for <strong>"{{ query }}"</strong>{% endif %}
 </div>
 
@@ -115,5 +115,85 @@
      class="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">Next &raquo;</a>
   {% endif %}
 </div>
+{% endif %}
+
+{% if query %}
+<div class="text-sm text-gray-500 mt-8 mb-3">
+  Datasets: {{ dataset_total }} result{{ dataset_total|pluralize }}
+</div>
+{% for ds in dataset_results %}
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-3 hover:shadow-md transition">
+  <div class="flex items-start justify-between gap-3">
+    <div class="flex-1">
+      <a href="{% url 'publications:dataset_detail' ds.accession_id %}"
+         class="text-ucsd-sky font-semibold hover:underline text-sm leading-snug">
+        {{ ds.accession }}
+      </a>
+      <span class="inline-block text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded ml-1">
+        {{ ds.accession_type }}
+      </span>
+      {% if ds.database %}
+      <span class="inline-block text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded ml-1">
+        {{ ds.database }}
+      </span>
+      {% endif %}
+      {% if ds.title %}
+      <p class="text-xs text-gray-700 mt-1">{{ ds.title }}</p>
+      {% endif %}
+      <div class="text-xs text-gray-500 mt-1">
+        {% if ds.organism %}{{ ds.organism }}{% endif %}
+        {% if ds.platform %}{% if ds.organism %} &middot; {% endif %}{{ ds.platform }}{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% empty %}
+<div class="text-sm text-gray-400 mb-6">No datasets match this query.</div>
+{% endfor %}
+{% if dataset_total > dataset_results|length %}
+<div class="text-xs text-gray-500 mb-6">Showing first {{ dataset_results|length }} dataset results.</div>
+{% endif %}
+
+<div class="text-sm text-gray-500 mt-8 mb-3">
+  Analyses: {{ analysis_total }} result{{ analysis_total|pluralize }}
+</div>
+{% for pipeline in analysis_results %}
+<div class="bg-white rounded-lg shadow-sm border p-4 mb-3 hover:shadow-md transition">
+  <div class="flex items-start justify-between gap-3">
+    <div class="flex-1">
+      {% if pipeline.is_db %}
+      <a href="{% url 'publications:analysis_detail' pipeline.id %}"
+         class="text-ucsd-sky font-semibold hover:underline text-sm leading-snug">
+        {{ pipeline.pipeline_title }}
+      </a>
+      {% else %}
+      <a href="{% url 'publications:analysis_detail_by_accession' pipeline.accession %}"
+         class="text-ucsd-sky font-semibold hover:underline text-sm leading-snug">
+        {{ pipeline.pipeline_title }}
+      </a>
+      {% endif %}
+      {% if pipeline.accession %}
+      <div class="text-xs text-gray-500 mt-1">{{ pipeline.accession }}</div>
+      {% endif %}
+      <div class="text-xs text-gray-500 mt-1">
+        {{ pipeline.step_count }} step{{ pipeline.step_count|pluralize }}
+        {% if pipeline.assay_type %}&middot; {{ pipeline.assay_type }}{% endif %}
+        {% if pipeline.source %}&middot; {{ pipeline.source }}{% endif %}
+      </div>
+      {% if pipeline.pub_title %}
+      <p class="text-xs text-gray-700 mt-1">
+        {{ pipeline.pub_title|truncatewords:20 }}
+        {% if pipeline.pub_year %}({{ pipeline.pub_year }}){% endif %}
+      </p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% empty %}
+<div class="text-sm text-gray-400 mb-6">No analyses match this query.</div>
+{% endfor %}
+{% if analysis_total > analysis_results|length %}
+<div class="text-xs text-gray-500">Showing first {{ analysis_results|length }} analysis results.</div>
+{% endif %}
 {% endif %}
 {% endblock %}
