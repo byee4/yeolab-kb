@@ -144,14 +144,108 @@ _update_status = {
 _status_lock = threading.Lock()
 
 
-def get_update_status():
+def get_update_status(upload_id=None):
     """Return a copy of the current update status."""
     with _status_lock:
         status = dict(_update_status)
         # Return defensive copies for nested mutable fields.
         status["log"] = list(_update_status.get("log", []))
         status["stats"] = dict(_update_status.get("stats", {}))
-        return status
+    if upload_id:
+        persisted = _load_encode_upload_state(upload_id)
+        if persisted:
+            agg = persisted.get("agg", {}) if isinstance(persisted.get("agg", {}), dict) else {}
+            persisted_stats = dict(agg)
+            persisted_stats.update({
+                "upload_id": upload_id,
+                "total_experiments": int(persisted.get("total_experiments", 0) or 0),
+                "total_batches": int(persisted.get("total_batches", 0) or 0),
+                "completed_batches": int(persisted.get("next_batch", 0) or 0),
+                "completed_experiments": int(persisted.get("next_index", 0) or 0),
+                "current_accession": str(persisted.get("current_accession", "") or ""),
+                "imported_accessions_recent": list(persisted.get("imported_accessions_recent", []) or []),
+            })
+            status["stats"] = persisted_stats
+            status["running"] = not bool(persisted.get("completed", False))
+            if status["running"]:
+                status["progress"] = (
+                    f"Importing ENCODE upload {upload_id} "
+                    f"({persisted_stats['completed_experiments']}/{persisted_stats['total_experiments']})"
+                )
+            elif not status.get("error"):
+                status["progress"] = f"ENCODE upload {upload_id} complete."
+    return status
+
+
+def _ensure_encode_upload_state_table():
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS encode_upload_state (
+                upload_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at TEXT
+            )
+            """
+        )
+
+
+def _save_encode_upload_state_db(upload_id, state):
+    _ensure_encode_upload_state_table()
+    payload = json.dumps(state)
+    updated_at = datetime.now().isoformat()
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO encode_upload_state (upload_id, state_json, updated_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (upload_id)
+            DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = EXCLUDED.updated_at
+            """,
+            [upload_id, payload, updated_at],
+        )
+
+
+def _load_encode_upload_state_db(upload_id):
+    try:
+        _ensure_encode_upload_state_table()
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT state_json FROM encode_upload_state WHERE upload_id = %s",
+                [upload_id],
+            )
+            row = cur.fetchone()
+        if not row or not row[0]:
+            return {}
+        parsed = json.loads(row[0])
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_encode_upload_state(upload_id, state):
+    _, state_path = _encode_upload_paths(upload_id)
+    with open(state_path, "w") as fh:
+        json.dump(state, fh, indent=2)
+    # Persist in shared DB so progress survives multi-instance polling.
+    _save_encode_upload_state_db(upload_id, state)
+
+
+def _load_encode_upload_state(upload_id):
+    # Prefer shared DB state first (works across app instances).
+    from_db = _load_encode_upload_state_db(upload_id)
+    if from_db:
+        return from_db
+
+    _, state_path = _encode_upload_paths(upload_id)
+    if not os.path.isfile(state_path):
+        return {}
+    try:
+        with open(state_path, "r") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def _set_status(**kwargs):
@@ -1161,24 +1255,6 @@ def _load_encode_upload_payload(upload_id):
     if not isinstance(graph, list):
         graph = []
     return graph
-
-
-def _load_encode_upload_state(upload_id):
-    _, state_path = _encode_upload_paths(upload_id)
-    if not os.path.isfile(state_path):
-        return {}
-    try:
-        with open(state_path, "r") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _save_encode_upload_state(upload_id, state):
-    _, state_path = _encode_upload_paths(upload_id)
-    with open(state_path, "w") as fh:
-        json.dump(state, fh, indent=2)
 
 
 def _extract_encode_control_accessions(control_values):
@@ -2191,20 +2267,36 @@ def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_
     if not graph:
         raise ValueError("No ENCODE Experiment records found in payload.")
 
+    batch_size = max(1, int(batch_size or 50))
     upload_id = _encode_upload_id_from_graph(graph)
     _save_encode_upload_payload(upload_id, graph)
     state = _load_encode_upload_state(upload_id)
     next_batch = int(state.get("next_batch", 0) or 0)
-    next_index = int(state.get("next_index", next_batch * max(1, int(batch_size or 50))) or 0)
+    next_index = int(state.get("next_index", next_batch * batch_size) or 0)
+    total_batches = (len(graph) + batch_size - 1) // batch_size
     completed = bool(state.get("completed", False))
     if completed:
         next_batch = 0
         next_index = 0
         state = {}
+    if not state:
+        _save_encode_upload_state(upload_id, {
+            "upload_id": upload_id,
+            "next_index": next_index,
+            "next_batch": next_batch,
+            "total_batches": total_batches,
+            "total_experiments": len(graph),
+            "current_accession": "",
+            "imported_accessions": [],
+            "imported_accessions_recent": [],
+            "agg": {},
+            "completed": False,
+            "updated_at": datetime.now().isoformat(),
+        })
 
     started = _start_background_worker(
         target=_run_encode_json_upload_import,
-        args=(upload_id, grant_label, int(batch_size)),
+        args=(upload_id, grant_label, batch_size),
         progress_msg="Starting ENCODE JSON batch import...",
     )
     if not started:
@@ -2301,6 +2393,7 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
                 "next_batch": next_batch,
                 "total_batches": total_batches,
                 "total_experiments": total_experiments,
+                "current_accession": acc,
                 "imported_accessions": imported_accessions[-5000:],
                 "imported_accessions_recent": imported_accessions[-30:],
                 "agg": agg,
@@ -2325,6 +2418,7 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
             "next_batch": total_batches,
             "total_batches": total_batches,
             "total_experiments": total_experiments,
+            "current_accession": "",
             "imported_accessions": imported_accessions[-5000:],
             "imported_accessions_recent": imported_accessions[-30:],
             "agg": agg,

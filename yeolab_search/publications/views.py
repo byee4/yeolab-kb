@@ -1454,7 +1454,8 @@ def admin_start_update(request):
 def admin_update_status(request):
     """Poll endpoint for update progress."""
     from . import services
-    return JsonResponse(services.get_update_status())
+    upload_id = (request.GET.get("upload_id", "") or "").strip()
+    return JsonResponse(services.get_update_status(upload_id=upload_id or None))
 
 
 @login_required

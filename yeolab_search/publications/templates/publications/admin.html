@@ -425,7 +425,11 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
   btn.disabled = true;
 
   const tick = () => {
-    fetch('{% url "publications:admin_update_status" %}')
+    const baseUrl = '{% url "publications:admin_update_status" %}';
+    const url = expectedUploadId
+      ? `${baseUrl}?upload_id=${encodeURIComponent(expectedUploadId)}`
+      : baseUrl;
+    fetch(url)
       .then(r => r.json())
       .then(data => {
         const stats = data.stats || {};
