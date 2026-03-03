@@ -119,7 +119,7 @@
 
 {% if query %}
 <div class="text-sm text-gray-500 mt-8 mb-3">
-  Datasets: {{ dataset_total }} result{{ dataset_total|pluralize }}
+  Datasets: {{ dataset_results|length }}{% if dataset_has_more %}+{% endif %} result{{ dataset_results|length|pluralize }}
 </div>
 {% for ds in dataset_results %}
 <div class="bg-white rounded-lg shadow-sm border p-4 mb-3 hover:shadow-md transition">
@@ -150,12 +150,12 @@
 {% empty %}
 <div class="text-sm text-gray-400 mb-6">No datasets match this query.</div>
 {% endfor %}
-{% if dataset_total > dataset_results|length %}
+{% if dataset_has_more %}
 <div class="text-xs text-gray-500 mb-6">Showing first {{ dataset_results|length }} dataset results.</div>
 {% endif %}
 
 <div class="text-sm text-gray-500 mt-8 mb-3">
-  Analyses: {{ analysis_total }} result{{ analysis_total|pluralize }}
+  Analyses: {{ analysis_results|length }}{% if analysis_has_more %}+{% endif %} result{{ analysis_results|length|pluralize }}
 </div>
 {% for pipeline in analysis_results %}
 <div class="bg-white rounded-lg shadow-sm border p-4 mb-3 hover:shadow-md transition">
@@ -192,7 +192,7 @@
 {% empty %}
 <div class="text-sm text-gray-400 mb-6">No analyses match this query.</div>
 {% endfor %}
-{% if analysis_total > analysis_results|length %}
+{% if analysis_has_more %}
 <div class="text-xs text-gray-500">Showing first {{ analysis_results|length }} analysis results.</div>
 {% endif %}
 {% endif %}

@@ -5,6 +5,7 @@ from django.shortcuts import render, get_object_or_404
 from django.db.models import Q, Count, Sum
 from django.db import connection
 from django.core.paginator import Paginator
+from django.core.cache import cache
 from django.http import JsonResponse, HttpResponse, StreamingHttpResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import csrf_protect, csrf_exempt
@@ -15,6 +16,12 @@ from .models import (
     SraExperiment, SraRun, ComputationalMethod, PublicationMethod,
     AnalysisPipeline, PipelineStep,
 )
+
+SEARCH_PREVIEW_LIMIT = 25
+SEARCH_FACETS_CACHE_KEY = "publications_search_facets_v1"
+SEARCH_FACETS_CACHE_TTL = 60 * 10
+CODE_EXAMPLE_PIPELINES_CACHE_KEY = "code_example_pipelines_v1"
+CODE_EXAMPLE_PIPELINES_CACHE_TTL = 60 * 5
 
 
 def _fts_search(query, limit=500):
@@ -117,26 +124,35 @@ def search(request):
 
     results = results.order_by("-pub_year", "-pub_month", "-pub_day")
 
-    paginator = Paginator(results, 25)
+    paginator = Paginator(results, SEARCH_PREVIEW_LIMIT)
     page = paginator.get_page(page_num)
 
-    years = (
-        Publication.objects.values_list("pub_year", flat=True)
-        .distinct()
-        .order_by("-pub_year")
-    )
-    journals = (
-        Publication.objects.values("journal_name")
-        .annotate(count=Count("pmid"))
-        .order_by("-count")[:30]
-    )
+    cached_facets = cache.get(SEARCH_FACETS_CACHE_KEY)
+    if cached_facets is None:
+        years = list(
+            Publication.objects.values_list("pub_year", flat=True)
+            .distinct()
+            .order_by("-pub_year")
+        )
+        journals = list(
+            Publication.objects.values("journal_name")
+            .annotate(count=Count("pmid"))
+            .order_by("-count")[:30]
+        )
+        cached_facets = {
+            "years": [y for y in years if y],
+            "journals": journals,
+        }
+        cache.set(SEARCH_FACETS_CACHE_KEY, cached_facets, SEARCH_FACETS_CACHE_TTL)
+    years = cached_facets["years"]
+    journals = cached_facets["journals"]
 
     dataset_results = []
-    dataset_total = 0
+    dataset_has_more = False
     analysis_results = []
-    analysis_total = 0
+    analysis_has_more = False
 
-    if query:
+    if len(query) >= 2:
         dataset_qs = DatasetAccession.objects.filter(
             Q(accession__icontains=query)
             | Q(title__icontains=query)
@@ -146,11 +162,12 @@ def search(request):
             | Q(overall_design__icontains=query)
             | Q(experiment_types__icontains=query)
         ).order_by("-accession_id")
-        dataset_total = dataset_qs.count()
-        dataset_results = list(dataset_qs[:25])
+        dataset_preview = list(dataset_qs[: SEARCH_PREVIEW_LIMIT + 1])
+        dataset_has_more = len(dataset_preview) > SEARCH_PREVIEW_LIMIT
+        dataset_results = dataset_preview[:SEARCH_PREVIEW_LIMIT]
 
         # Build merged analysis items, preferring curated code_examples entries
-        ce_pipelines = _build_code_example_pipelines()
+        ce_pipelines = _get_cached_code_example_pipelines()
         q_lower = query.lower()
         ce_matches = [
             p for p in ce_pipelines
@@ -208,8 +225,8 @@ def search(request):
 
         merged_analysis = db_items + ce_items
         merged_analysis.sort(key=lambda item: (-(item.get("pub_year") or 0), item.get("pipeline_title") or ""))
-        analysis_total = len(merged_analysis)
-        analysis_results = merged_analysis[:25]
+        analysis_has_more = len(merged_analysis) > SEARCH_PREVIEW_LIMIT
+        analysis_results = merged_analysis[:SEARCH_PREVIEW_LIMIT]
 
     ctx = {
         "query": query,
@@ -218,12 +235,12 @@ def search(request):
         "author_q": author_q,
         "page": page,
         "total": paginator.count,
-        "years": [y for y in years if y],
+        "years": years,
         "journals": journals,
         "dataset_results": dataset_results,
-        "dataset_total": dataset_total,
+        "dataset_has_more": dataset_has_more,
         "analysis_results": analysis_results,
-        "analysis_total": analysis_total,
+        "analysis_has_more": analysis_has_more,
     }
     return render(request, "publications/search.html", ctx)
 
@@ -2055,6 +2072,16 @@ def _build_code_example_pipelines():
 
         pipelines.append(pipeline)
 
+    return pipelines
+
+
+def _get_cached_code_example_pipelines():
+    """Cache code_examples-derived pipeline index used by search views."""
+    cached = cache.get(CODE_EXAMPLE_PIPELINES_CACHE_KEY)
+    if cached is not None:
+        return cached
+    pipelines = _build_code_example_pipelines()
+    cache.set(CODE_EXAMPLE_PIPELINES_CACHE_KEY, pipelines, CODE_EXAMPLE_PIPELINES_CACHE_TTL)
     return pipelines
 
 

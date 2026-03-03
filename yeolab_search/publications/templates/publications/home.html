@@ -10,11 +10,17 @@
   </p>
 </div>
 
-<!-- Search bar -->
-<form action="{% url 'publications:search' %}" method="get" class="max-w-2xl mx-auto mb-12">
+<!-- Scoped search bar -->
+<form id="landing-search-form" action="{% url 'publications:search' %}" method="get" class="max-w-3xl mx-auto mb-12">
   <div class="flex shadow-sm">
-    <input type="text" name="q" placeholder="Search publications, datasets, analyses…"
-           class="flex-1 px-4 py-3 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-ucsd-sky text-sm">
+    <select id="landing-search-scope"
+            class="px-3 py-3 border border-r-0 border-gray-300 rounded-l-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-ucsd-sky">
+      <option value="publications" selected>Publications</option>
+      <option value="datasets">Datasets</option>
+      <option value="analysis">Analyses</option>
+    </select>
+    <input id="landing-search-input" type="text" name="q" placeholder="Search publications (title, abstract, journal)…"
+           class="flex-1 px-4 py-3 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-ucsd-sky text-sm">
     <button type="submit"
             class="px-6 py-3 bg-ucsd-sky text-white font-medium rounded-r-lg hover:bg-ucsd-blue transition text-sm">
       Search
@@ -75,6 +81,33 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
+  // Scope selector routes to the dedicated endpoint to avoid heavy cross-domain search.
+  const scopeEl = document.getElementById('landing-search-scope');
+  const formEl = document.getElementById('landing-search-form');
+  const inputEl = document.getElementById('landing-search-input');
+  const scopeConfig = {
+    publications: {
+      action: "{% url 'publications:search' %}",
+      placeholder: "Search publications (title, abstract, journal)…",
+    },
+    datasets: {
+      action: "{% url 'publications:dataset_list' %}",
+      placeholder: "Search datasets (accession, title, organism)…",
+    },
+    analysis: {
+      action: "{% url 'publications:analysis_list' %}",
+      placeholder: "Search analyses (pipeline, accession, assay)…",
+    },
+  };
+
+  function updateSearchScope() {
+    const selected = scopeConfig[scopeEl.value] || scopeConfig.publications;
+    formEl.action = selected.action;
+    inputEl.placeholder = selected.placeholder;
+  }
+  scopeEl.addEventListener('change', updateSearchScope);
+  updateSearchScope();
+
   const yearData = {{ stats.year_data|safe }};
   new Chart(document.getElementById('yearChart'), {
     type: 'bar',
