@@ -94,12 +94,6 @@ def _load_registry() -> tuple[dict, dict]:
                 # Default lock behavior: if missing, treat as locked.
                 if "locked" not in data:
                     data["locked"] = True
-                    # Persist default lock into legacy files.
-                    try:
-                        with open(filepath, "w") as out_fh:
-                            json.dump(data, out_fh, indent=2)
-                    except OSError:
-                        pass
                 registry[accession] = data
                 # Compute relative path from base_dir to parent of the file
                 parent = os.path.dirname(filepath)
@@ -119,12 +113,24 @@ def reload_registry():
     _REGISTRY, _PATHS = _load_registry()
 
 
+def _ensure_fresh_registry():
+    """
+    Refresh in-memory registry from disk.
+
+    Important for multi-worker deployments: each worker keeps its own process
+    memory, so relying on a one-time import cache can make pages show stale
+    steps after edits/sync/extract in another worker.
+    """
+    reload_registry()
+
+
 # Load at import time
 _REGISTRY, _PATHS = _load_registry()
 
 
 def get_registry() -> dict:
     """Return the current in-memory registry dict."""
+    _ensure_fresh_registry()
     return _REGISTRY
 
 
@@ -139,6 +145,7 @@ def get_dir_path() -> str | None:
 
 def list_datasets() -> list[str]:
     """Return all dataset accessions in the registry, sorted."""
+    _ensure_fresh_registry()
     return sorted((_REGISTRY or {}).keys())
 
 
@@ -147,6 +154,7 @@ def list_datasets_with_paths() -> list[dict]:
     Return dataset list with path info for the admin UI.
     Each item: {"accession": "GSE120023", "path": "2020/Oct"}
     """
+    _ensure_fresh_registry()
     result = []
     for acc in sorted((_REGISTRY or {}).keys()):
         result.append({
@@ -158,11 +166,13 @@ def list_datasets_with_paths() -> list[dict]:
 
 def get_dataset_rel_path(accession: str) -> str | None:
     """Return the relative path (e.g. '2020/Oct') for an accession, or None."""
+    _ensure_fresh_registry()
     return _PATHS.get(accession)
 
 
 def get_dataset_content(accession: str) -> str | None:
     """Return the raw JSON string for one dataset file, or None."""
+    _ensure_fresh_registry()
     base_dir = _find_dir()
     if not base_dir:
         return None
@@ -328,6 +338,7 @@ def is_dataset_locked(accession: str) -> bool:
     Return whether a dataset JSON is locked against automatic overwrite.
     Missing files or missing keys default to True (locked).
     """
+    _ensure_fresh_registry()
     entry = (_REGISTRY or {}).get(accession)
     if not entry:
         return True
@@ -336,6 +347,7 @@ def is_dataset_locked(accession: str) -> bool:
 
 def get_dataset_raw_text(accession: str) -> str | None:
     """Return the raw_text field from a dataset's JSON file, or None."""
+    _ensure_fresh_registry()
     registry = _REGISTRY or {}
     entry = registry.get(accession)
     if not entry:
@@ -415,6 +427,7 @@ def get_steps_for_dataset(accession: str) -> list[dict] | None:
     """
     Return the list of steps for a dataset accession, or None if not found.
     """
+    _ensure_fresh_registry()
     registry = _REGISTRY or {}
     entry = registry.get(accession)
     if not entry:
