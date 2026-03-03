@@ -184,3 +184,25 @@ Additionally, registry load had a write-on-read side effect: when `locked` was m
 - Dataset and analysis views now read consistent, current JSON-backed processing steps.
 - Viewing pages no longer causes implicit JSON rewrites.
 - Step data is no longer "clobbered" by cross-worker stale cache reads.
+
+---
+
+## 2026-03-03 — Globus Login Recovery on Token Endpoint 5xx
+
+### Symptom
+
+Some normal browser sessions failed during `/complete/globus/` with provider-side token endpoint 5xx errors.
+
+### Fix
+
+Updated `yeolab_search.middleware.GlobusDebugMiddleware` to add a safe recovery path:
+
+- If `/complete/globus/` raises `requests.exceptions.HTTPError` with status `>= 500`,
+  automatically:
+  1. logs out the user
+  2. flushes session state
+  3. redirects to `/login/globus/?oauth_retry=1`
+
+### Result
+
+Users can recover from transient provider-side failures by being routed into a clean re-auth flow, instead of landing on a hard 500 page.

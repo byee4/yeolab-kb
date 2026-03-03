@@ -1,5 +1,7 @@
 import logging
 from requests.exceptions import HTTPError
+from django.contrib.auth import logout
+from django.shortcuts import redirect
 
 logger = logging.getLogger(__name__)
 
@@ -19,3 +21,17 @@ class GlobusDebugMiddleware:
             logger.error(f"Request Body: {exception.response.request.body}")
             logger.error(f"Response Body: {exception.response.text}")
             logger.error("=========================================")
+
+            # Recovery path: if Globus token exchange failed with 5xx on callback,
+            # clear auth/session state and send user through a clean login flow.
+            if (
+                request.path.startswith("/complete/globus/")
+                and exception.response.status_code >= 500
+            ):
+                try:
+                    logout(request)
+                    if hasattr(request, "session"):
+                        request.session.flush()
+                except Exception:
+                    pass
+                return redirect("/login/globus/?oauth_retry=1")
