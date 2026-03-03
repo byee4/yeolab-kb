@@ -1059,6 +1059,30 @@ def _encode_search(search_type, extra_params=None):
     return data.get("@graph", [])
 
 
+def _encode_search_experiments_for_grant(grant):
+    """
+    Robust ENCODE experiment search for a grant identifier.
+    Some filters can return 403 depending on portal policy/index state.
+    Try multiple query variants and degrade gracefully.
+    """
+    variants = [
+        ("award.name", {"award.name": grant}),
+        ("award.project_num", {"award.project_num": grant}),
+        ("award.project", {"award.project": grant}),
+        ("searchTerm", {"searchTerm": grant}),
+    ]
+    for label, params in variants:
+        try:
+            results = _encode_search("Experiment", params)
+        except Exception as e:
+            _log(f"  Warning: {label} query failed for {grant}: {e}")
+            continue
+        if results:
+            _log(f"  Grant {grant}: matched {len(results)} experiments via {label}")
+            return results
+    return []
+
+
 def _extract_encode_control_accessions(control_values):
     """Extract ENCSR control accessions from ENCODE `possible_controls` values."""
     controls = []
@@ -1411,9 +1435,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
         all_experiments = {}  # accession -> experiment dict
         for grant in grant_list:
             _log(f"[1/5] Searching ENCODE experiments for {grant}...")
-            results = _encode_search("Experiment", {"award.name": grant})
-            if not results:
-                results = _encode_search("Experiment", {"award.project_num": grant})
+            results = _encode_search_experiments_for_grant(grant)
             _log(f"  Found {len(results)} experiments for {grant}")
 
             for exp in results:
@@ -1790,6 +1812,243 @@ def _run_encode_update(grant_list, skip_files, skip_details):
         _set_status(error=str(e))
     finally:
         _set_status(running=False, finished_at=datetime.now().isoformat())
+
+
+def import_encode_experiments_from_search_payload(payload, grant_label="uploaded_json"):
+    """
+    Import ENCODE experiments from a pre-downloaded ENCODE search JSON payload.
+
+    Expected payload shape:
+      {"@graph": [ ... Experiment objects ... ]}
+    or directly a list of Experiment objects.
+
+    This path avoids ENCODE API calls and still performs:
+      - dataset insertion/linking
+      - ENCODE processing-step extraction
+      - analysis pipeline insertion (when PMID can be resolved)
+      - code_examples JSON sync/backfill
+    """
+    if isinstance(payload, dict):
+        graph = payload.get("@graph", [])
+    elif isinstance(payload, list):
+        graph = payload
+    else:
+        raise ValueError("Unsupported JSON payload format. Expected object with '@graph' or a list.")
+
+    if not isinstance(graph, list):
+        raise ValueError("Invalid ENCODE payload: '@graph' must be a list.")
+
+    all_experiments = {}
+    for exp in graph:
+        if not isinstance(exp, dict):
+            continue
+        acc = (exp.get("accession") or "").strip()
+        if not acc or acc in all_experiments:
+            continue
+        parsed = _parse_encode_experiment(exp, grant_label)
+        parsed["_detail"] = exp
+        # Use embedded files if present; otherwise keep empty.
+        files = exp.get("files", [])
+        parsed["_files"] = files if isinstance(files, list) else []
+        all_experiments[acc] = parsed
+
+    total_experiments = len(all_experiments)
+    total_links = 0
+    encode_pipeline_count = 0
+    encode_step_count = 0
+    encode_pipeline_skipped_no_pmid = 0
+    encode_json_synced = 0
+
+    _ensure_pipeline_tables()
+    _ensure_methods_tables()
+
+    # Import/update dataset rows and publication links.
+    with connection.cursor() as cur:
+        for acc, exp in all_experiments.items():
+            organism = ", ".join(exp.get("organisms", []))
+            summary = f"{exp.get('assay_title', '')} of {exp.get('target', 'N/A')} in {exp.get('biosample_summary', exp.get('biosample_term', 'N/A'))}"
+            assay_title = (exp.get("assay_title", "") or "").strip()
+            is_eclip = "eclip" in assay_title.lower()
+            controls = exp.get("controls", []) if is_eclip else []
+            experiment_types_json = json.dumps([assay_title]) if assay_title else ""
+
+            cur.execute(
+                "SELECT accession_id, relations FROM dataset_accessions WHERE accession = %s",
+                [acc],
+            )
+            existing = cur.fetchone()
+            if existing:
+                existing_relations = _parse_relations_json(existing[1])
+                merged_relations = _merge_control_relations(existing_relations, controls)
+                relations_json = json.dumps(merged_relations) if merged_relations else ""
+                cur.execute(
+                    """UPDATE dataset_accessions
+                       SET title = COALESCE(NULLIF(%s, ''), title),
+                           organism = COALESCE(NULLIF(%s, ''), organism),
+                           summary = COALESCE(NULLIF(%s, ''), summary),
+                           status = COALESCE(NULLIF(%s, ''), status),
+                           submission_date = COALESCE(NULLIF(%s, ''), submission_date),
+                           last_update_date = COALESCE(NULLIF(%s, ''), last_update_date),
+                           contact_name = COALESCE(NULLIF(%s, ''), contact_name),
+                           experiment_types = COALESCE(NULLIF(%s, ''), experiment_types),
+                           relations = COALESCE(NULLIF(%s, ''), relations)
+                       WHERE accession_id = %s""",
+                    [
+                        exp.get("description", ""),
+                        organism,
+                        summary,
+                        exp.get("status", ""),
+                        exp.get("date_submitted", ""),
+                        exp.get("date_released", ""),
+                        exp.get("lab", ""),
+                        experiment_types_json,
+                        relations_json,
+                        existing[0],
+                    ],
+                )
+                acc_id = existing[0]
+            else:
+                relations_json = json.dumps([f"control:{c}" for c in controls]) if controls else ""
+                if _is_postgres():
+                    cur.execute(
+                        """INSERT INTO dataset_accessions
+                           (accession, accession_type, database, title, organism,
+                            summary, overall_design, status, submission_date,
+                            last_update_date, contact_name, experiment_types, relations,
+                            citation_pmids)
+                           VALUES (%s, 'ENCSR', 'ENCODE', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           RETURNING accession_id""",
+                        [
+                            acc, exp.get("description", ""), organism, summary,
+                            exp.get("description", ""), exp.get("status", ""),
+                            exp.get("date_submitted", ""), exp.get("date_released", ""),
+                            exp.get("lab", ""), experiment_types_json,
+                            relations_json, json.dumps(exp.get("pmids", [])),
+                        ],
+                    )
+                    acc_id = cur.fetchone()[0]
+                else:
+                    cur.execute(
+                        """INSERT INTO dataset_accessions
+                           (accession, accession_type, database, title, organism,
+                            summary, overall_design, status, submission_date,
+                            last_update_date, contact_name, experiment_types, relations,
+                            citation_pmids)
+                           VALUES (%s, 'ENCSR', 'ENCODE', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        [
+                            acc, exp.get("description", ""), organism, summary,
+                            exp.get("description", ""), exp.get("status", ""),
+                            exp.get("date_submitted", ""), exp.get("date_released", ""),
+                            exp.get("lab", ""), experiment_types_json,
+                            relations_json, json.dumps(exp.get("pmids", [])),
+                        ],
+                    )
+                    acc_id = cur.lastrowid
+
+            all_experiments[acc]["accession_id"] = acc_id
+
+            for control_acc in controls:
+                cur.execute(
+                    """INSERT INTO dataset_accessions
+                       (accession, accession_type, database, title)
+                       VALUES (%s, 'ENCSR', 'ENCODE', %s)
+                       ON CONFLICT (accession) DO NOTHING""",
+                    [control_acc, "ENCODE control experiment"],
+                )
+
+            for pmid in exp.get("pmids", []):
+                cur.execute("SELECT pmid FROM publications WHERE pmid = %s", [pmid])
+                if cur.fetchone():
+                    cur.execute(
+                        """INSERT INTO publication_datasets
+                           (pmid, accession_id, source)
+                           VALUES (%s, %s, 'encode_json_upload')
+                           ON CONFLICT DO NOTHING""",
+                        [pmid, acc_id],
+                    )
+                    total_links += 1
+
+    try:
+        method_ids = _get_method_ids()
+    except Exception:
+        method_ids = {}
+
+    processing_experiments = dict(all_experiments)
+    for acc, existing_exp in _load_encode_backfill_candidates().items():
+        processing_experiments.setdefault(acc, existing_exp)
+
+    with connection.cursor() as cur:
+        for acc, exp in processing_experiments.items():
+            acc_id = exp.get("accession_id")
+            if not acc_id:
+                cur.execute(
+                    "SELECT accession_id FROM dataset_accessions WHERE accession = %s",
+                    [acc],
+                )
+                row = cur.fetchone()
+                acc_id = row[0] if row else None
+            if not acc_id:
+                continue
+
+            steps, raw_text = _extract_encode_processing_steps(
+                exp,
+                detail=exp.get("_detail"),
+                files=exp.get("_files") or [],
+            )
+            if not steps:
+                continue
+
+            _write_encode_steps_to_code_examples(
+                accession=acc,
+                raw_text=raw_text,
+                steps=steps,
+                method_ids=method_ids,
+            )
+            encode_json_synced += 1
+
+            pipeline_pmid = _resolve_encode_pipeline_pmid(cur, acc_id, exp.get("pmids", []))
+            if not pipeline_pmid:
+                encode_pipeline_skipped_no_pmid += 1
+                continue
+
+            cur.execute(
+                """DELETE FROM pipeline_steps
+                   WHERE pipeline_id IN (
+                       SELECT pipeline_id FROM analysis_pipelines
+                       WHERE accession_id = %s AND source = 'encode_metadata_processing'
+                   )""",
+                [acc_id],
+            )
+            cur.execute(
+                """DELETE FROM analysis_pipelines
+                   WHERE accession_id = %s AND source = 'encode_metadata_processing'""",
+                [acc_id],
+            )
+
+            pid = _insert_pipeline(
+                cur=cur,
+                pmid=pipeline_pmid,
+                accession_id=acc_id,
+                assay_type=exp.get("assay_title", ""),
+                title=f"{acc} Data Processing",
+                source="encode_metadata_processing",
+                raw_text=raw_text,
+                steps=steps,
+                method_ids=method_ids,
+                accession_str=acc,
+            )
+            if pid:
+                encode_pipeline_count += 1
+                encode_step_count += len(steps)
+
+    return {
+        "experiments_loaded": total_experiments,
+        "publication_links_added": total_links,
+        "encode_pipelines": encode_pipeline_count,
+        "encode_pipeline_steps": encode_step_count,
+        "encode_pipeline_skipped_no_pmid": encode_pipeline_skipped_no_pmid,
+        "encode_json_synced": encode_json_synced,
+    }
 
 
 def _parse_encode_experiment(exp, grant):

@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import SimpleTestCase
 
 from publications import services
@@ -77,3 +79,19 @@ class EncodeProcessingExtractionTests(SimpleTestCase):
 
         pmid = services._resolve_encode_pipeline_pmid(FakeCursor(), accession_id=2, pmids=["nope"])
         self.assertEqual(pmid, "88888")
+
+    @patch("publications.services._log")
+    def test_encode_search_experiments_for_grant_falls_back_after_error(self, _log_mock):
+        def fake_encode_search(search_type, params):
+            self.assertEqual(search_type, "Experiment")
+            if "award.name" in params:
+                raise RuntimeError("403 forbidden")
+            if "award.project_num" in params:
+                return [{"accession": "ENCSR001AAA"}]
+            return []
+
+        with patch("publications.services._encode_search", side_effect=fake_encode_search):
+            results = services._encode_search_experiments_for_grant("U41HG009889")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["accession"], "ENCSR001AAA")

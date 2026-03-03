@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import RequestFactory, SimpleTestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 from publications import views
 
@@ -182,3 +183,23 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
         with patch("publications.views.connection", fake_connection):
             response = views.healthz(self.rf.get("/healthz/"))
         self.assertEqual(response.status_code, 503)
+
+    @patch("publications.services.import_encode_experiments_from_search_payload")
+    def test_admin_upload_encode_json_imports_payload(self, import_mock):
+        import_mock.return_value = {"experiments_loaded": 1}
+        upload = SimpleUploadedFile(
+            "encode.json",
+            b'{"@graph":[{"accession":"ENCSR000AAA"}]}',
+            content_type="application/json",
+        )
+
+        request = self.rf.post(
+            "/admin/upload-encode-json/",
+            {"grant_label": "U41HG009889", "json_file": upload},
+        )
+        request.user = SimpleNamespace(is_authenticated=True)
+        request._dont_enforce_csrf_checks = True
+
+        response = views.admin_upload_encode_json(request)
+        self.assertEqual(response.status_code, 200)
+        import_mock.assert_called_once()
