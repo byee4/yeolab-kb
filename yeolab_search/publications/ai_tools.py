@@ -14,6 +14,14 @@ from .models import (
 )
 
 
+def _dataset_detail_url(accession_id):
+    return f"/dataset/{accession_id}/"
+
+
+def _analysis_detail_url(accession):
+    return f"/analysis/dataset/{accession}/"
+
+
 # ============================================================
 # Tool definitions (Anthropic API format)
 # ============================================================
@@ -446,6 +454,8 @@ def search_datasets(query, accession_type=None):
             "organism": ds.organism,
             "num_samples": ds.num_samples,
             "linked_publications": pub_count,
+            "dataset_url": _dataset_detail_url(ds.accession_id),
+            "analysis_url": _analysis_detail_url(ds.accession),
         })
     return {"count": len(output), "results": output}
 
@@ -522,6 +532,8 @@ def get_dataset(accession):
         "total_sra_runs": total_runs,
         "total_size_mb": round(total_size, 1),
         "file_count": file_count,
+        "dataset_url": _dataset_detail_url(ds.accession_id),
+        "analysis_url": _analysis_detail_url(ds.accession),
     }
 
 
@@ -666,6 +678,7 @@ def search_pipelines(query, assay_type=None, limit=5):
             "pub_title": p.pmid.title[:120] if p.pmid else None,
             "pub_year": p.pmid.pub_year if p.pmid else None,
             "dataset": p.accession.accession if p.accession else None,
+            "analysis_url": _analysis_detail_url(p.accession.accession) if p.accession else None,
             "steps": step_list,
         }
         results.append(result)

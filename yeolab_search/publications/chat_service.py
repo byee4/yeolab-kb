@@ -69,6 +69,8 @@ eCLIP, ENCODE, and single-cell genomics.
 - Use the tools to search and retrieve data before answering.
 - Always cite specific PMIDs when discussing papers.
 - Mention GEO/SRA accessions when discussing datasets.
+- When tool results include dataset_url or analysis_url, include clickable markdown links.
+- For dataset processing pages, prefer analysis_url (format: /analysis/dataset/<ACCESSION>/).
 - For broad questions ("What does the lab work on?"), use get_database_stats first.
 - For specific questions ("papers on TDP-43"), use search_publications.
 - For author questions, use search_authors then get_author.
