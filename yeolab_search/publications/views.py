@@ -75,7 +75,7 @@ def home(request):
 
 
 def search(request):
-    """Search publications via FTS5 or LIKE fallback."""
+    """Search publications, datasets, and analyses."""
     query = request.GET.get("q", "").strip()
     year = request.GET.get("year", "")
     journal = request.GET.get("journal", "")
@@ -131,6 +131,86 @@ def search(request):
         .order_by("-count")[:30]
     )
 
+    dataset_results = []
+    dataset_total = 0
+    analysis_results = []
+    analysis_total = 0
+
+    if query:
+        dataset_qs = DatasetAccession.objects.filter(
+            Q(accession__icontains=query)
+            | Q(title__icontains=query)
+            | Q(organism__icontains=query)
+            | Q(platform__icontains=query)
+            | Q(summary__icontains=query)
+            | Q(overall_design__icontains=query)
+            | Q(experiment_types__icontains=query)
+        ).order_by("-accession_id")
+        dataset_total = dataset_qs.count()
+        dataset_results = list(dataset_qs[:25])
+
+        # Build merged analysis items, preferring curated code_examples entries
+        ce_pipelines = _build_code_example_pipelines()
+        q_lower = query.lower()
+        ce_matches = [
+            p for p in ce_pipelines
+            if q_lower in (p.get("pipeline_title") or "").lower()
+            or q_lower in (p.get("accession") or "").lower()
+            or q_lower in (p.get("acc_title") or "").lower()
+            or q_lower in (p.get("pub_title") or "").lower()
+            or q_lower in (p.get("assay_type") or "").lower()
+        ]
+        ce_accessions = {p.get("accession") for p in ce_matches if p.get("accession")}
+
+        db_qs = (
+            AnalysisPipeline.objects.select_related("pmid", "accession")
+            .annotate(step_count=Count("pipelinestep"))
+            .filter(
+                Q(pipeline_title__icontains=query)
+                | Q(assay_type__icontains=query)
+                | Q(source__icontains=query)
+                | Q(accession__accession__icontains=query)
+                | Q(accession__title__icontains=query)
+                | Q(pmid__pmid__icontains=query)
+                | Q(pmid__title__icontains=query)
+            )
+            .order_by("-pmid__pub_year", "pipeline_title")
+        )
+
+        db_items = []
+        for p in db_qs:
+            db_acc = p.accession.accession if p.accession else ""
+            if db_acc and db_acc in ce_accessions:
+                continue
+            db_items.append({
+                "id": p.pipeline_id,
+                "is_db": True,
+                "pipeline_title": p.pipeline_title or "Analysis Pipeline",
+                "accession": db_acc,
+                "source": p.source or "",
+                "assay_type": p.assay_type or "",
+                "step_count": p.step_count,
+                "pub_title": p.pmid.title if p.pmid else "",
+                "pub_year": p.pmid.pub_year if p.pmid else None,
+            })
+
+        ce_items = [{
+            "id": p["id"],
+            "is_db": False,
+            "pipeline_title": p["pipeline_title"],
+            "accession": p["accession"],
+            "source": p["source"],
+            "assay_type": p["assay_type"],
+            "step_count": p["step_count"],
+            "pub_title": p["pub_title"],
+            "pub_year": p["pub_year"],
+        } for p in ce_matches]
+
+        merged_analysis = db_items + ce_items
+        merged_analysis.sort(key=lambda item: (-(item.get("pub_year") or 0), item.get("pipeline_title") or ""))
+        analysis_total = len(merged_analysis)
+        analysis_results = merged_analysis[:25]
+
     ctx = {
         "query": query,
         "year": year,
@@ -140,6 +220,10 @@ def search(request):
         "total": paginator.count,
         "years": [y for y in years if y],
         "journals": journals,
+        "dataset_results": dataset_results,
+        "dataset_total": dataset_total,
+        "analysis_results": analysis_results,
+        "analysis_total": analysis_total,
     }
     return render(request, "publications/search.html", ctx)
 
