@@ -2195,9 +2195,11 @@ def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_
     _save_encode_upload_payload(upload_id, graph)
     state = _load_encode_upload_state(upload_id)
     next_batch = int(state.get("next_batch", 0) or 0)
+    next_index = int(state.get("next_index", next_batch * max(1, int(batch_size or 50))) or 0)
     completed = bool(state.get("completed", False))
     if completed:
         next_batch = 0
+        next_index = 0
         state = {}
 
     started = _start_background_worker(
@@ -2211,11 +2213,13 @@ def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_
             "message": "Another update is already running.",
             "upload_id": upload_id,
             "resume_from_batch": next_batch,
+            "resume_from_experiment": next_index,
         }
     return {
         "ok": True,
         "upload_id": upload_id,
         "resume_from_batch": next_batch,
+        "resume_from_experiment": next_index,
         "total_experiments": len(graph),
     }
 
@@ -2233,6 +2237,8 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
 
         state = _load_encode_upload_state(upload_id)
         next_batch = int(state.get("next_batch", 0) or 0)
+        next_index = int(state.get("next_index", next_batch * batch_size) or 0)
+        next_index = max(0, min(next_index, total_experiments))
         imported_accessions = list(state.get("imported_accessions", [])) if state else []
         agg = {
             "experiments_loaded": 0,
@@ -2249,33 +2255,49 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
                 except Exception:
                     pass
 
-        for batch_idx in range(next_batch, total_batches):
-            start = batch_idx * batch_size
-            end = min((batch_idx + 1) * batch_size, total_experiments)
-            batch = graph[start:end]
-            batch_accessions = [
-                str(item.get("accession", "")).strip()
-                for item in batch
-                if isinstance(item, dict)
-            ]
+        _set_status(stats={
+            **agg,
+            "upload_id": upload_id,
+            "total_experiments": total_experiments,
+            "total_batches": total_batches,
+            "completed_batches": next_index // batch_size,
+            "completed_experiments": next_index,
+            "current_accession": "",
+            "imported_accessions_recent": imported_accessions[-12:],
+        })
 
-            _log(
-                f"[Batch {batch_idx + 1}/{total_batches}] Importing {len(batch)} experiments: "
-                f"{', '.join(batch_accessions[:12])}{' ...' if len(batch_accessions) > 12 else ''}"
-            )
+        current_batch = None
+        for exp_idx in range(next_index, total_experiments):
+            exp = graph[exp_idx] if exp_idx < len(graph) else {}
+            if not isinstance(exp, dict):
+                next_index = exp_idx + 1
+                continue
+
+            acc = str(exp.get("accession", "")).strip()
+            batch_idx = exp_idx // batch_size
+            if current_batch != batch_idx:
+                current_batch = batch_idx
+                start = batch_idx * batch_size
+                end = min((batch_idx + 1) * batch_size, total_experiments)
+                _log(f"[Batch {batch_idx + 1}/{total_batches}] Parsing experiments {start + 1}-{end}...")
+
+            _log(f"[{exp_idx + 1}/{total_experiments}] Parsing {acc or '(unknown accession)'}")
 
             result = import_encode_experiments_from_search_payload(
-                {"@graph": batch},
+                {"@graph": [exp]},
                 grant_label=grant_label,
                 include_backfill=False,
             )
             for key in agg:
                 agg[key] += int(result.get(key, 0) or 0)
 
-            imported_accessions.extend(batch_accessions)
-            next_batch = batch_idx + 1
+            if acc:
+                imported_accessions.append(acc)
+            next_index = exp_idx + 1
+            next_batch = next_index // batch_size
             state_payload = {
                 "upload_id": upload_id,
+                "next_index": next_index,
                 "next_batch": next_batch,
                 "total_batches": total_batches,
                 "total_experiments": total_experiments,
@@ -2292,11 +2314,14 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
                 "total_experiments": total_experiments,
                 "total_batches": total_batches,
                 "completed_batches": next_batch,
+                "completed_experiments": next_index,
+                "current_accession": acc,
                 "imported_accessions_recent": imported_accessions[-12:],
             })
 
         state_payload = {
             "upload_id": upload_id,
+            "next_index": total_experiments,
             "next_batch": total_batches,
             "total_batches": total_batches,
             "total_experiments": total_experiments,
@@ -2313,6 +2338,8 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
             "total_experiments": total_experiments,
             "total_batches": total_batches,
             "completed_batches": total_batches,
+            "completed_experiments": total_experiments,
+            "current_accession": "",
             "imported_accessions_recent": imported_accessions[-12:],
         })
         _log(f"ENCODE JSON import complete for {upload_id}: {total_experiments} experiments processed.")

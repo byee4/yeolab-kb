@@ -392,9 +392,10 @@ function uploadEncodeJson() {
     if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
       const uploadId = data.upload_id || '';
       const resumeBatch = data.resume_from_batch || 0;
+      const resumeExperiment = data.resume_from_experiment || 0;
       const total = data.total_experiments || 0;
       showEncodeUploadResult(
-        `${data.message || 'Import started.'}\nupload_id: ${uploadId}\nresume_from_batch: ${resumeBatch}\ntotal_experiments: ${total}\n\nWaiting for import progress...`
+        `${data.message || 'Import started.'}\nupload_id: ${uploadId}\nresume_from_batch: ${resumeBatch}\nresume_from_experiment: ${resumeExperiment}\ntotal_experiments: ${total}\n\nWaiting for import progress...`
       );
       startEncodeUploadStatusPolling(uploadId);
     } else {
@@ -431,15 +432,20 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
         const statusUploadId = stats.upload_id || expectedUploadId || '';
         const totalBatches = Number(stats.total_batches || 0);
         const completedBatches = Number(stats.completed_batches || 0);
+        const totalExperiments = Number(stats.total_experiments || 0);
+        const completedExperiments = Number(stats.completed_experiments || 0);
+        const currentAccession = (stats.current_accession || '').trim();
         const basePct = 50;
         let pct = basePct;
-        if (totalBatches > 0) {
+        if (totalExperiments > 0) {
+          pct = basePct + Math.min(49, Math.round((completedExperiments / totalExperiments) * 49));
+        } else if (totalBatches > 0) {
           pct = basePct + Math.min(49, Math.round((completedBatches / totalBatches) * 49));
         }
         setEncodeUploadStage('import', 'active');
         setEncodeUploadProgress(
           pct,
-          `Importing batch ${completedBatches}/${totalBatches || '?'} (${statusUploadId || 'pending id'})`
+          `Parsing dataset ${completedExperiments}/${totalExperiments || '?'} (${statusUploadId || 'pending id'})`
         );
 
         const recent = stats.imported_accessions_recent || [];
@@ -447,12 +453,14 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
           data.progress || 'Importing...',
           '',
           `upload_id: ${statusUploadId || '-'}`,
+          `completed_experiments: ${completedExperiments}/${totalExperiments || '-'}`,
           `completed_batches: ${completedBatches}/${totalBatches || '-'}`,
           `experiments_loaded: ${stats.experiments_loaded ?? '-'}`,
           `encode_json_synced: ${stats.encode_json_synced ?? '-'}`,
           `encode_pipelines: ${stats.encode_pipelines ?? '-'}`,
+          `current_dataset: ${currentAccession || '-'}`,
           '',
-          'Recently imported experiments:',
+          'Recently parsed datasets:',
           ...(recent.length ? recent.map(acc => `- ${acc}`) : ['- (waiting...)']),
         ];
         showEncodeUploadResult(lines.join('\n'));

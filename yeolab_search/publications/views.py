@@ -1492,6 +1492,7 @@ def admin_upload_encode_json(request):
                     "message": started.get("message", "Another update is already running."),
                     "upload_id": started.get("upload_id"),
                     "resume_from_batch": started.get("resume_from_batch", 0),
+                    "resume_from_experiment": started.get("resume_from_experiment", 0),
                 },
                 status=409,
             )
@@ -1500,6 +1501,7 @@ def admin_upload_encode_json(request):
             "message": "ENCODE JSON uploaded. Batch import started.",
             "upload_id": started.get("upload_id"),
             "resume_from_batch": started.get("resume_from_batch", 0),
+            "resume_from_experiment": started.get("resume_from_experiment", 0),
             "total_experiments": started.get("total_experiments", 0),
         })
     except ValueError as exc:
