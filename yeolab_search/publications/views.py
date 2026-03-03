@@ -1478,12 +1478,29 @@ def admin_upload_encode_json(request):
         return JsonResponse({"ok": False, "message": f"Invalid JSON file: {exc}"}, status=400)
 
     grant_label = request.POST.get("grant_label", "").strip() or "uploaded_json"
+    batch_size = request.POST.get("batch_size", "").strip() or "50"
     try:
-        stats = services.import_encode_experiments_from_search_payload(payload, grant_label=grant_label)
+        started = services.start_encode_json_upload_import(
+            payload=payload,
+            grant_label=grant_label,
+            batch_size=int(batch_size),
+        )
+        if not started.get("ok"):
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "message": started.get("message", "Another update is already running."),
+                    "upload_id": started.get("upload_id"),
+                    "resume_from_batch": started.get("resume_from_batch", 0),
+                },
+                status=409,
+            )
         return JsonResponse({
             "ok": True,
-            "message": "ENCODE JSON uploaded and imported.",
-            "stats": stats,
+            "message": "ENCODE JSON uploaded. Batch import started.",
+            "upload_id": started.get("upload_id"),
+            "resume_from_batch": started.get("resume_from_batch", 0),
+            "total_experiments": started.get("total_experiments", 0),
         })
     except ValueError as exc:
         return JsonResponse({"ok": False, "message": str(exc)}, status=400)

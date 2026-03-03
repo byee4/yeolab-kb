@@ -11,6 +11,8 @@ import json
 import re
 import time
 import os
+import hashlib
+import tempfile
 import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -1083,6 +1085,67 @@ def _encode_search_experiments_for_grant(grant):
     return []
 
 
+def _encode_upload_state_dir():
+    path = os.path.join(tempfile.gettempdir(), "yeolab_encode_import")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _encode_upload_paths(upload_id):
+    base = _encode_upload_state_dir()
+    return (
+        os.path.join(base, f"{upload_id}.json"),
+        os.path.join(base, f"{upload_id}.state.json"),
+    )
+
+
+def _encode_upload_id_from_graph(graph):
+    accessions = sorted(
+        {
+            str(item.get("accession", "")).strip()
+            for item in (graph or [])
+            if isinstance(item, dict) and str(item.get("accession", "")).strip()
+        }
+    )
+    digest = hashlib.sha1("\n".join(accessions).encode("utf-8")).hexdigest()
+    return f"{digest[:16]}_{len(accessions)}"
+
+
+def _save_encode_upload_payload(upload_id, graph):
+    payload_path, _ = _encode_upload_paths(upload_id)
+    with open(payload_path, "w") as fh:
+        json.dump({"@graph": graph}, fh)
+    return payload_path
+
+
+def _load_encode_upload_payload(upload_id):
+    payload_path, _ = _encode_upload_paths(upload_id)
+    with open(payload_path, "r") as fh:
+        payload = json.load(fh)
+    graph = payload.get("@graph", []) if isinstance(payload, dict) else []
+    if not isinstance(graph, list):
+        graph = []
+    return graph
+
+
+def _load_encode_upload_state(upload_id):
+    _, state_path = _encode_upload_paths(upload_id)
+    if not os.path.isfile(state_path):
+        return {}
+    try:
+        with open(state_path, "r") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_encode_upload_state(upload_id, state):
+    _, state_path = _encode_upload_paths(upload_id)
+    with open(state_path, "w") as fh:
+        json.dump(state, fh, indent=2)
+
+
 def _extract_encode_control_accessions(control_values):
     """Extract ENCSR control accessions from ENCODE `possible_controls` values."""
     controls = []
@@ -1814,7 +1877,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
         _set_status(running=False, finished_at=datetime.now().isoformat())
 
 
-def import_encode_experiments_from_search_payload(payload, grant_label="uploaded_json"):
+def import_encode_experiments_from_search_payload(payload, grant_label="uploaded_json", include_backfill=True):
     """
     Import ENCODE experiments from a pre-downloaded ENCODE search JSON payload.
 
@@ -1974,8 +2037,9 @@ def import_encode_experiments_from_search_payload(payload, grant_label="uploaded
         method_ids = {}
 
     processing_experiments = dict(all_experiments)
-    for acc, existing_exp in _load_encode_backfill_candidates().items():
-        processing_experiments.setdefault(acc, existing_exp)
+    if include_backfill:
+        for acc, existing_exp in _load_encode_backfill_candidates().items():
+            processing_experiments.setdefault(acc, existing_exp)
 
     with connection.cursor() as cur:
         for acc, exp in processing_experiments.items():
@@ -2049,6 +2113,157 @@ def import_encode_experiments_from_search_payload(payload, grant_label="uploaded
         "encode_pipeline_skipped_no_pmid": encode_pipeline_skipped_no_pmid,
         "encode_json_synced": encode_json_synced,
     }
+
+
+def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_size=50):
+    """
+    Start a resumable background import from uploaded ENCODE Experiment JSON.
+    Returns a status dict with upload_id and resume position.
+    """
+    if isinstance(payload, dict):
+        graph = payload.get("@graph", [])
+    elif isinstance(payload, list):
+        graph = payload
+    else:
+        raise ValueError("Unsupported JSON payload format. Expected object with '@graph' or a list.")
+
+    if not isinstance(graph, list):
+        raise ValueError("Invalid ENCODE payload: '@graph' must be a list.")
+
+    graph = [g for g in graph if isinstance(g, dict) and str(g.get("accession", "")).strip()]
+    if not graph:
+        raise ValueError("No ENCODE Experiment records found in payload.")
+
+    upload_id = _encode_upload_id_from_graph(graph)
+    _save_encode_upload_payload(upload_id, graph)
+    state = _load_encode_upload_state(upload_id)
+    next_batch = int(state.get("next_batch", 0) or 0)
+    completed = bool(state.get("completed", False))
+    if completed:
+        next_batch = 0
+        state = {}
+
+    started = _start_background_worker(
+        target=_run_encode_json_upload_import,
+        args=(upload_id, grant_label, int(batch_size)),
+        progress_msg="Starting ENCODE JSON batch import...",
+    )
+    if not started:
+        return {
+            "ok": False,
+            "message": "Another update is already running.",
+            "upload_id": upload_id,
+            "resume_from_batch": next_batch,
+        }
+    return {
+        "ok": True,
+        "upload_id": upload_id,
+        "resume_from_batch": next_batch,
+        "total_experiments": len(graph),
+    }
+
+
+def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
+    """Background worker for resumable ENCODE JSON batch imports."""
+    try:
+        graph = _load_encode_upload_payload(upload_id)
+        if not graph:
+            raise RuntimeError(f"Upload payload not found or empty for upload_id={upload_id}")
+
+        batch_size = max(1, int(batch_size or 50))
+        total_experiments = len(graph)
+        total_batches = (total_experiments + batch_size - 1) // batch_size
+
+        state = _load_encode_upload_state(upload_id)
+        next_batch = int(state.get("next_batch", 0) or 0)
+        imported_accessions = list(state.get("imported_accessions", [])) if state else []
+        agg = {
+            "experiments_loaded": 0,
+            "publication_links_added": 0,
+            "encode_pipelines": 0,
+            "encode_pipeline_steps": 0,
+            "encode_pipeline_skipped_no_pmid": 0,
+            "encode_json_synced": 0,
+        }
+        if state:
+            for key in agg:
+                try:
+                    agg[key] = int(state.get("agg", {}).get(key, 0))
+                except Exception:
+                    pass
+
+        for batch_idx in range(next_batch, total_batches):
+            start = batch_idx * batch_size
+            end = min((batch_idx + 1) * batch_size, total_experiments)
+            batch = graph[start:end]
+            batch_accessions = [
+                str(item.get("accession", "")).strip()
+                for item in batch
+                if isinstance(item, dict)
+            ]
+
+            _log(
+                f"[Batch {batch_idx + 1}/{total_batches}] Importing {len(batch)} experiments: "
+                f"{', '.join(batch_accessions[:12])}{' ...' if len(batch_accessions) > 12 else ''}"
+            )
+
+            result = import_encode_experiments_from_search_payload(
+                {"@graph": batch},
+                grant_label=grant_label,
+                include_backfill=False,
+            )
+            for key in agg:
+                agg[key] += int(result.get(key, 0) or 0)
+
+            imported_accessions.extend(batch_accessions)
+            next_batch = batch_idx + 1
+            state_payload = {
+                "upload_id": upload_id,
+                "next_batch": next_batch,
+                "total_batches": total_batches,
+                "total_experiments": total_experiments,
+                "imported_accessions": imported_accessions[-5000:],
+                "imported_accessions_recent": imported_accessions[-30:],
+                "agg": agg,
+                "completed": False,
+                "updated_at": datetime.now().isoformat(),
+            }
+            _save_encode_upload_state(upload_id, state_payload)
+            _set_status(stats={
+                **agg,
+                "upload_id": upload_id,
+                "total_experiments": total_experiments,
+                "total_batches": total_batches,
+                "completed_batches": next_batch,
+                "imported_accessions_recent": imported_accessions[-12:],
+            })
+
+        state_payload = {
+            "upload_id": upload_id,
+            "next_batch": total_batches,
+            "total_batches": total_batches,
+            "total_experiments": total_experiments,
+            "imported_accessions": imported_accessions[-5000:],
+            "imported_accessions_recent": imported_accessions[-30:],
+            "agg": agg,
+            "completed": True,
+            "updated_at": datetime.now().isoformat(),
+        }
+        _save_encode_upload_state(upload_id, state_payload)
+        _set_status(stats={
+            **agg,
+            "upload_id": upload_id,
+            "total_experiments": total_experiments,
+            "total_batches": total_batches,
+            "completed_batches": total_batches,
+            "imported_accessions_recent": imported_accessions[-12:],
+        })
+        _log(f"ENCODE JSON import complete for {upload_id}: {total_experiments} experiments processed.")
+    except Exception as e:
+        _log(f"ERROR (encode json import): {e}")
+        _set_status(error=str(e))
+    finally:
+        _set_status(running=False, finished_at=datetime.now().isoformat())
 
 
 def _parse_encode_experiment(exp, grant):

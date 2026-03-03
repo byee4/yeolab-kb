@@ -191,9 +191,14 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 404)
         self.assertIn(b"No analysis content is currently available", response.content)
 
-    @patch("publications.services.import_encode_experiments_from_search_payload")
+    @patch("publications.services.start_encode_json_upload_import")
     def test_admin_upload_encode_json_imports_payload(self, import_mock):
-        import_mock.return_value = {"experiments_loaded": 1}
+        import_mock.return_value = {
+            "ok": True,
+            "upload_id": "abc123_1",
+            "resume_from_batch": 0,
+            "total_experiments": 1,
+        }
         upload = SimpleUploadedFile(
             "encode.json",
             b'{"@graph":[{"accession":"ENCSR000AAA"}]}',
