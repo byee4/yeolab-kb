@@ -234,6 +234,21 @@ Updated deployment/env documentation to include `GUNICORN_TIMEOUT`.
 
 ---
 
+## 2026-03-03 — Chat Transcript Download (.txt)
+
+### Feature
+
+Added a `Download .txt` button to the chat interface toolbar.
+
+### Behavior
+
+- Exports the current conversation (`conversationHistory`) to a local text file.
+- Includes export timestamp, provider, and model metadata at the top.
+- Prevents export while streaming is in progress.
+- Shows a helpful message if no messages are present yet.
+
+---
+
 ## 2026-03-03 — Remove Runtime Default Pipeline Generation in Dataset/Analysis Views
 
 ### Problem
