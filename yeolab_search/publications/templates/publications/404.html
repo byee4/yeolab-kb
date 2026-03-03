@@ -1,0 +1,36 @@
+{% extends "publications/base.html" %}
+{% block title %}Not Found — Yeo Lab Publications{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto mt-8">
+  <div class="bg-white rounded-lg shadow-sm border p-8 text-center">
+    <div class="text-5xl font-bold text-ucsd-blue mb-2">404</div>
+    <h1 class="text-xl font-semibold text-gray-800 mb-2">Page Not Found</h1>
+    <p class="text-sm text-gray-600 mb-6">
+      The page you requested does not exist or is not available yet.
+    </p>
+
+    {% if missing_context == "analysis" and missing_accession %}
+    <div class="text-sm text-gray-600 mb-6">
+      No analysis content is currently available for
+      <span class="font-mono text-gray-800">{{ missing_accession }}</span>.
+    </div>
+    {% endif %}
+
+    <div class="flex flex-wrap justify-center gap-2">
+      <a href="{% url 'publications:home' %}"
+         class="px-4 py-2 bg-ucsd-sky text-white text-sm rounded hover:bg-ucsd-blue transition">
+        Go Home
+      </a>
+      <a href="{% url 'publications:dataset_list' %}"
+         class="px-4 py-2 border text-sm rounded text-gray-700 hover:bg-gray-50 transition">
+        Browse Datasets
+      </a>
+      <a href="{% url 'publications:analysis_list' %}"
+         class="px-4 py-2 border text-sm rounded text-gray-700 hover:bg-gray-50 transition">
+        Browse Analysis
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

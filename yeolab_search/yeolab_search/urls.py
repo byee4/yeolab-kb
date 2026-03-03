@@ -19,3 +19,6 @@ urlpatterns = [
     # Application
     path('', include('publications.urls')),
 ]
+
+# Global error handlers
+handler404 = "publications.views.custom_404"
