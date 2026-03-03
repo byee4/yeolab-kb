@@ -5,17 +5,21 @@ REPO_SLUG="${GITHUB_REPO:-byee4/yeolab-publications-db}"
 REPO_BRANCH="${GITHUB_BRANCH:-main}"
 REPO_DIR="${CODE_EXAMPLES_REPO_DIR:-/app/yeolab-publications-db}"
 CODE_EXAMPLES_PATH="${REPO_DIR}/code_examples"
+export GIT_TERMINAL_PROMPT=0
 
 sync_repo() {
   local repo_url="https://github.com/${REPO_SLUG}.git"
   local auth_cfg=()
 
   if [[ -n "${GITHUB_PAT:-}" ]]; then
-    auth_cfg=(-c "http.extraHeader=Authorization: Bearer ${GITHUB_PAT}")
+    local basic
+    basic="$(printf "x-access-token:%s" "${GITHUB_PAT}" | base64 | tr -d '\n')"
+    auth_cfg=(-c "http.extraHeader=Authorization: Basic ${basic}")
   fi
 
   if [[ -d "${REPO_DIR}/.git" ]]; then
     echo "[start_web] Updating ${REPO_SLUG} (${REPO_BRANCH})..."
+    git -C "${REPO_DIR}" remote set-url origin "${repo_url}"
     git "${auth_cfg[@]}" -C "${REPO_DIR}" fetch origin "${REPO_BRANCH}" --depth 1
     git -C "${REPO_DIR}" checkout "${REPO_BRANCH}"
     git -C "${REPO_DIR}" reset --hard "origin/${REPO_BRANCH}"
@@ -26,7 +30,7 @@ sync_repo() {
   fi
 }
 
-if sync_repo; then
+if sync_repo 2>&1; then
   if [[ -d "${CODE_EXAMPLES_PATH}" ]]; then
     export CODE_EXAMPLES_DIR="${CODE_EXAMPLES_PATH}"
     echo "[start_web] Using CODE_EXAMPLES_DIR=${CODE_EXAMPLES_DIR}"
