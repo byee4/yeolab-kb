@@ -206,3 +206,30 @@ Updated `yeolab_search.middleware.GlobusDebugMiddleware` to add a safe recovery 
 ### Result
 
 Users can recover from transient provider-side failures by being routed into a clean re-auth flow, instead of landing on a hard 500 page.
+
+---
+
+## 2026-03-03 — Remove Runtime Default Pipeline Generation in Dataset/Analysis Views
+
+### Problem
+
+Dataset/analysis pages could show fallback-generated steps (from metadata templates) when curated `code_examples` steps were missing or stale, which made step output appear clobbered/inconsistent.
+
+### Removed Logic
+
+In `publications/views.py`:
+
+1. `dataset_detail` no longer calls `generate_pipeline_from_metadata(...)` when `code_examples` steps are empty.
+2. `_build_code_example_pipelines` no longer auto-adds missing GSE accessions by generating template pipelines from DB metadata.
+3. `analysis_detail_by_accession` no longer falls back to generated steps; it now returns 404 if no curated `code_examples` entry exists.
+
+### Result
+
+Runtime display now uses only curated `code_examples` JSON for dataset-level analysis steps, eliminating default-template fallback in user-facing views.
+
+### Documentation Follow-up
+
+Added explicit in-code documentation to `publications/code_examples.py`:
+
+- marked `generate_pipeline_from_metadata(...)` as deprecated for user-facing runtime rendering
+- documented that `_PIPELINE_TEMPLATES` / `_DEFAULT_TEMPLATE` are retained only for manual/admin/offline workflows

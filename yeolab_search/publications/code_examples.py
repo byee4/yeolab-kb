@@ -491,6 +491,12 @@ def get_github_url(accession: str, tool_name: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Pipeline generation from DB metadata
 # ---------------------------------------------------------------------------
+#
+# NOTE (2026-03-03):
+# These template defaults are intentionally retained for manual/admin/offline
+# tooling, but they are no longer used by user-facing dataset/analysis views.
+# Runtime views now render only curated code_examples JSON steps to avoid
+# fallback-generated output that can appear to clobber curated pipelines.
 
 # Standard pipeline templates keyed by SRA library_strategy
 _PIPELINE_TEMPLATES = {
@@ -593,12 +599,17 @@ _CATEGORY_ORDER = {
 
 def generate_pipeline_from_metadata(accession: str) -> dict | None:
     """
+    Deprecated for user-facing runtime rendering.
+
     Generate a pipeline JSON structure from DB metadata for a given accession.
 
     Uses SRA library_strategy to select a standard pipeline template, then
     enriches with any linked computational_methods from the publication.
 
     Returns a dict with "steps" list, or None if the accession is not in the DB.
+
+    This function is kept for non-runtime workflows (manual/admin/backfill),
+    but dataset/analysis web views should not call it.
     """
     try:
         from django.db import connection
