@@ -165,17 +165,18 @@
   {% endif %}
 </div>
 
-{% if analysis_accession and analysis_steps %}
+{% if analysis_accession %}
 <div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
   <div class="flex items-center justify-between mb-3">
     <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide">
-      Analysis ({{ analysis_steps|length }} step{{ analysis_steps|length|pluralize }})
+      Analysis{% if analysis_steps %} ({{ analysis_steps|length }} step{{ analysis_steps|length|pluralize }}){% endif %}
     </h2>
     <a href="{% url 'publications:analysis_detail_by_accession' analysis_accession %}"
        class="text-xs text-ucsd-sky hover:underline">
-      View Full Analysis
+      View Data Processing
     </a>
   </div>
+  {% if analysis_steps %}
   <div class="text-xs text-gray-500 mb-2">
     Processing steps for <span class="font-mono text-gray-700">{{ analysis_accession }}</span>
   </div>
@@ -187,8 +188,11 @@
     {% endfor %}
   </ol>
   {% if analysis_steps|length > 8 %}
-  <div class="text-xs text-gray-500 mt-2">
-    Showing first 8 steps.
+  <div class="text-xs text-gray-500 mt-2">Showing first 8 steps.</div>
+  {% endif %}
+  {% else %}
+  <div class="text-xs text-gray-500">
+    Analysis page is available for <span class="font-mono text-gray-700">{{ analysis_accession }}</span>.
   </div>
   {% endif %}
 </div>
