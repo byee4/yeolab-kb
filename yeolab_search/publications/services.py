@@ -1059,6 +1059,30 @@ def _encode_search(search_type, extra_params=None):
     return data.get("@graph", [])
 
 
+def _encode_search_experiments_for_grant(grant):
+    """
+    Robust ENCODE experiment search for a grant identifier.
+    Some filters can return 403 depending on portal policy/index state.
+    Try multiple query variants and degrade gracefully.
+    """
+    variants = [
+        ("award.name", {"award.name": grant}),
+        ("award.project_num", {"award.project_num": grant}),
+        ("award.project", {"award.project": grant}),
+        ("searchTerm", {"searchTerm": grant}),
+    ]
+    for label, params in variants:
+        try:
+            results = _encode_search("Experiment", params)
+        except Exception as e:
+            _log(f"  Warning: {label} query failed for {grant}: {e}")
+            continue
+        if results:
+            _log(f"  Grant {grant}: matched {len(results)} experiments via {label}")
+            return results
+    return []
+
+
 def _extract_encode_control_accessions(control_values):
     """Extract ENCSR control accessions from ENCODE `possible_controls` values."""
     controls = []
@@ -1411,9 +1435,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
         all_experiments = {}  # accession -> experiment dict
         for grant in grant_list:
             _log(f"[1/5] Searching ENCODE experiments for {grant}...")
-            results = _encode_search("Experiment", {"award.name": grant})
-            if not results:
-                results = _encode_search("Experiment", {"award.project_num": grant})
+            results = _encode_search_experiments_for_grant(grant)
             _log(f"  Found {len(results)} experiments for {grant}")
 
             for exp in results:
