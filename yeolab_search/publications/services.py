@@ -1208,6 +1208,10 @@ def _encode_fetch_experiment_and_files(accession):
                 "genome_annotation",
                 "mapped_by",
                 "md5sum",
+                "biological_replicates",
+                "quality_metrics",
+                "analysis_step_version",
+                "step_run",
             ],
         },
     )
@@ -1306,6 +1310,118 @@ _ENCODE_PROCESSING_KEYWORDS = re.compile(
 )
 
 
+def _encode_resolve_software_info(sw_ver, software_cache=None):
+    """
+    Resolve ENCODE analysis software name/version from embedded dicts or URIs.
+    Returns a normalized string like "STAR(2.7.10a)".
+    """
+    cache = software_cache if isinstance(software_cache, dict) else {}
+
+    if isinstance(sw_ver, dict):
+        sw_info = sw_ver.get("software", {})
+        if isinstance(sw_info, dict):
+            name = str(sw_info.get("name", "unknown_tool")).strip()
+        else:
+            name = str(sw_info).strip("/").split("/")[-1] or "unknown_tool"
+        version = str(sw_ver.get("version", "v?")).strip() or "v?"
+        return f"{name}({version})"
+
+    sw_uri = str(sw_ver or "").strip()
+    if not sw_uri:
+        return ""
+    if sw_uri in cache:
+        return cache[sw_uri]
+
+    clean_uri = sw_uri
+    if not clean_uri.startswith("/"):
+        clean_uri = f"/{clean_uri}"
+    if not clean_uri.endswith("/"):
+        clean_uri = f"{clean_uri}/"
+    try:
+        info = _encode_api_get(
+            f"{ENCODE_BASE_URL}{clean_uri}",
+            params={"format": "json"},
+            label=f"software-version {clean_uri}",
+        )
+        if isinstance(info, dict):
+            version = str(info.get("version", "v?")).strip() or "v?"
+            sw_field = info.get("software", {})
+            if isinstance(sw_field, dict):
+                name = str(sw_field.get("name", "unknown_tool")).strip()
+            else:
+                name = str(sw_field).strip("/").split("/")[-1] or "unknown_tool"
+            resolved = f"{name}({version})"
+            cache[sw_uri] = resolved
+            return resolved
+    except Exception:
+        pass
+
+    fallback = clean_uri.strip("/").split("/")[-1]
+    resolved = f"unknown_tool({fallback})"
+    cache[sw_uri] = resolved
+    return resolved
+
+
+def _encode_flatten_processing_lines(exp, detail=None, files=None):
+    """
+    Build one-line processing summaries per ENCODE file using step/software/QC metadata.
+    Returns list[str] preserving file order.
+    """
+    out_lines = []
+    software_cache = {}
+    for f in files or []:
+        if not isinstance(f, dict):
+            continue
+        file_acc = str(f.get("accession", "")).strip()
+        file_format = str(f.get("file_format", "")).strip() or "file"
+        out_type = str(f.get("output_type", "")).strip() or "N/A"
+        assembly = str(f.get("mapping_assembly") or f.get("assembly") or "N/A").strip() or "N/A"
+        reps = f.get("biological_replicates", []) if isinstance(f.get("biological_replicates", []), list) else []
+        rep_str = ",".join(str(r) for r in reps) if reps else "N/A"
+
+        step_name = "N/A"
+        software_used = []
+        step_ver_obj = None
+        step_run = f.get("step_run")
+        if isinstance(step_run, dict) and isinstance(step_run.get("analysis_step_version"), dict):
+            step_ver_obj = step_run.get("analysis_step_version")
+        elif isinstance(f.get("analysis_step_version"), dict):
+            step_ver_obj = f.get("analysis_step_version")
+
+        if isinstance(step_ver_obj, dict):
+            step = step_ver_obj.get("analysis_step", {})
+            if isinstance(step, dict):
+                step_name = str(step.get("name", "N/A")).strip() or "N/A"
+            for sw_ver in step_ver_obj.get("software_versions", []) or []:
+                resolved = _encode_resolve_software_info(sw_ver, software_cache=software_cache)
+                if resolved:
+                    software_used.append(resolved)
+
+        qc_summaries = []
+        for qc in f.get("quality_metrics", []) or []:
+            if not isinstance(qc, dict):
+                continue
+            mapped = qc.get("Uniquely mapped reads %")
+            pct_dup = qc.get("pct_duplicate_reads")
+            if mapped is not None and str(mapped).strip():
+                qc_summaries.append(f"Map:{mapped}%")
+            if pct_dup is not None and str(pct_dup).strip():
+                qc_summaries.append(f"Dup:{pct_dup}%")
+            if (mapped is None or str(mapped).strip() == "") and (pct_dup is None or str(pct_dup).strip() == ""):
+                qtypes = qc.get("@type", [])
+                if isinstance(qtypes, list) and qtypes:
+                    qc_summaries.append(str(qtypes[0]).replace("QualityMetric", ""))
+
+        step_desc = (
+            f"File {file_acc}.{file_format}: output={out_type}; assembly={assembly}; "
+            f"replicates={rep_str}; step={step_name}; "
+            f"software={','.join(software_used) if software_used else 'N/A'}; "
+            f"qc={','.join(qc_summaries) if qc_summaries else 'N/A'}."
+        )
+        out_lines.append(step_desc)
+    return out_lines
+
+
 def _split_text_into_processing_sentences(text):
     """Split free text into sentence-like processing steps."""
     if not text:
@@ -1402,6 +1518,10 @@ def _extract_encode_processing_steps(exp, detail=None, files=None):
     if file_formats:
         _add_sentence(f"Produced file formats include: {', '.join(sorted(file_formats))}.")
 
+    # Refined flattened metadata parsing: emit one processing line per file.
+    for line in _encode_flatten_processing_lines(exp, detail=detail, files=files):
+        _add_sentence(line)
+
     # De-duplicate while preserving order.
     ordered = []
     seen = set()
@@ -1427,7 +1547,7 @@ def _extract_encode_processing_steps(exp, detail=None, files=None):
     return steps, raw_text
 
 
-def _write_encode_steps_to_code_examples(accession, raw_text, steps, method_ids):
+def _write_encode_steps_to_code_examples(accession, raw_text, steps, method_ids, force_override=False):
     """
     Create/overwrite a dataset JSON file for ENCODE accessions using extracted metadata steps.
     """
@@ -1451,7 +1571,7 @@ def _write_encode_steps_to_code_examples(accession, raw_text, steps, method_ids)
         and bool(str(existing.get("raw_text", "")).strip())
     )
 
-    if has_prior_extract and is_dataset_locked(accession):
+    if has_prior_extract and is_dataset_locked(accession) and not force_override:
         _log(f"  Skipping code_examples overwrite for {accession} (locked=true)")
         return
 
@@ -1477,6 +1597,8 @@ def _write_encode_steps_to_code_examples(accession, raw_text, steps, method_ids)
         "raw_text_source": source_name,
         "locked": existing_locked if existing else True,
     }
+    if force_override:
+        payload["locked"] = False
     content = json.dumps(payload, indent=2)
     year, month = lookup_pub_date(accession)
     kwargs = {}
@@ -1993,6 +2115,7 @@ def import_encode_experiments_from_search_payload(
     grant_label="uploaded_json",
     include_backfill=True,
     fetch_live_details=True,
+    override_existing=False,
 ):
     """
     Import ENCODE experiments from a pre-downloaded ENCODE search JSON payload.
@@ -2200,6 +2323,7 @@ def import_encode_experiments_from_search_payload(
                 raw_text=raw_text,
                 steps=steps,
                 method_ids=method_ids,
+                force_override=override_existing,
             )
             encode_json_synced += 1
 
@@ -2208,19 +2332,29 @@ def import_encode_experiments_from_search_payload(
                 encode_pipeline_skipped_no_pmid += 1
                 continue
 
-            cur.execute(
-                """DELETE FROM pipeline_steps
-                   WHERE pipeline_id IN (
-                       SELECT pipeline_id FROM analysis_pipelines
+            if not override_existing:
+                cur.execute(
+                    """SELECT 1 FROM analysis_pipelines
                        WHERE accession_id = %s AND source = 'encode_metadata_processing'
-                   )""",
-                [acc_id],
-            )
-            cur.execute(
-                """DELETE FROM analysis_pipelines
-                   WHERE accession_id = %s AND source = 'encode_metadata_processing'""",
-                [acc_id],
-            )
+                       LIMIT 1""",
+                    [acc_id],
+                )
+                if cur.fetchone():
+                    continue
+            else:
+                cur.execute(
+                    """DELETE FROM pipeline_steps
+                       WHERE pipeline_id IN (
+                           SELECT pipeline_id FROM analysis_pipelines
+                           WHERE accession_id = %s AND source = 'encode_metadata_processing'
+                       )""",
+                    [acc_id],
+                )
+                cur.execute(
+                    """DELETE FROM analysis_pipelines
+                       WHERE accession_id = %s AND source = 'encode_metadata_processing'""",
+                    [acc_id],
+                )
 
             pid = _insert_pipeline(
                 cur=cur,
@@ -2248,7 +2382,7 @@ def import_encode_experiments_from_search_payload(
     }
 
 
-def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_size=50):
+def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_size=50, override_existing=False):
     """
     Start a resumable background import from uploaded ENCODE Experiment JSON.
     Returns a status dict with upload_id and resume position.
@@ -2296,7 +2430,7 @@ def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_
 
     started = _start_background_worker(
         target=_run_encode_json_upload_import,
-        args=(upload_id, grant_label, batch_size),
+        args=(upload_id, grant_label, batch_size, bool(override_existing)),
         progress_msg="Starting ENCODE JSON batch import...",
     )
     if not started:
@@ -2316,7 +2450,7 @@ def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_
     }
 
 
-def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
+def _run_encode_json_upload_import(upload_id, grant_label, batch_size, override_existing=False):
     """Background worker for resumable ENCODE JSON batch imports."""
     try:
         graph = _load_encode_upload_payload(upload_id)
@@ -2379,6 +2513,7 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size):
                 {"@graph": [exp]},
                 grant_label=grant_label,
                 include_backfill=False,
+                override_existing=bool(override_existing),
             )
             for key in agg:
                 agg[key] += int(result.get(key, 0) or 0)

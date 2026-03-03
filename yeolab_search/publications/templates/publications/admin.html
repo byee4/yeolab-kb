@@ -95,6 +95,10 @@
   <div class="grid md:grid-cols-4 gap-2 mt-2">
     <div class="md:col-span-3 text-xs text-gray-500 self-center">
       Batch import runs in the background. If interrupted, re-uploading the same JSON resumes from the last completed batch.
+      <label class="inline-flex items-center gap-1 ml-3">
+        <input type="checkbox" id="encode-override-existing" class="rounded border-gray-300">
+        Override existing ENCODE processing steps
+      </label>
     </div>
     <button onclick="uploadEncodeJson()" id="btn-encode-upload"
             class="md:col-span-1 px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50 justify-self-end">
@@ -344,6 +348,7 @@ function uploadEncodeJson() {
   const fileInput = document.getElementById('encode-json-file');
   const labelInput = document.getElementById('encode-grant-label');
   const batchInput = document.getElementById('encode-batch-size');
+  const overrideInput = document.getElementById('encode-override-existing');
   const btn = document.getElementById('btn-encode-upload');
   const file = fileInput.files && fileInput.files[0];
   if (!file) {
@@ -357,6 +362,7 @@ function uploadEncodeJson() {
   if (label) form.append('grant_label', label);
   const batchSize = parseInt((batchInput.value || '50').trim(), 10);
   if (Number.isFinite(batchSize) && batchSize > 0) form.append('batch_size', String(batchSize));
+  if (overrideInput && overrideInput.checked) form.append('override_existing', '1');
 
   btn.disabled = true;
   showEncodeUploadResult('Uploading and importing ENCODE JSON...');

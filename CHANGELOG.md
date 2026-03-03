@@ -16,3 +16,5 @@
 - Updated ENCODE upload import parsing to fetch each uploaded accession from live ENCODE experiment JSON (`/experiments/<accession>/?format=json`) plus file metadata before deriving processing steps.
 - Refined ENCODE upload progress tracking to checkpoint and publish status per dataset (per accession), including `completed_experiments/total_experiments`, current accession, and recently parsed datasets.
 - Fixed ENCODE upload progress polling in multi-instance deployments by persisting upload state in DB and allowing status polling by `upload_id` to avoid stale `0/-` progress.
+- Refined ENCODE processing extraction to generate one metadata-rich processing line per file (output type, assembly, replicates, step name, software, QC), modeled after `parse_encode_metadata.py`.
+- Added an ENCODE upload `override_existing` option to force replacement of previously stored ENCODE processing steps/pipelines during grant JSON import.
