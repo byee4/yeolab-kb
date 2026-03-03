@@ -343,7 +343,7 @@ def _parse_json_field(value):
 def dataset_detail(request, accession_id):
     """Detail view for a single dataset accession."""
     dataset = get_object_or_404(DatasetAccession, accession_id=accession_id)
-    from .code_examples import get_steps_for_dataset, generate_pipeline_from_metadata
+    from .code_examples import get_steps_for_dataset
 
     pub_links = (
         PublicationDataset.objects.filter(accession=dataset)
@@ -626,9 +626,6 @@ def dataset_detail(request, accession_id):
 
     analysis_accession = (dataset.accession or "").strip()
     analysis_steps = get_steps_for_dataset(analysis_accession) or []
-    if not analysis_steps and analysis_accession:
-        generated = generate_pipeline_from_metadata(analysis_accession) or {}
-        analysis_steps = generated.get("steps", []) if isinstance(generated, dict) else []
 
     return render(request, "publications/dataset_detail.html", {
         "dataset": dataset,
@@ -1851,32 +1848,12 @@ def chat_message(request):
 
 def _build_code_example_pipelines():
     """
-    Build pipeline-like data structures from the code_examples JSON registry
-    AND from DB metadata for GSE datasets not yet in the registry.
-    Returns a list of dicts that mirror AnalysisPipeline + steps for templates.
+    Build pipeline-like data structures from the code_examples JSON registry.
+    Returns a list of dicts that mirror AnalysisPipeline + steps.
     """
-    from .code_examples import get_registry, get_dataset_rel_path, generate_pipeline_from_metadata
+    from .code_examples import get_registry, get_dataset_rel_path
 
     registry = dict(get_registry())  # copy so we don't mutate the original
-
-    # Also discover GSE datasets in DB that aren't in registry yet
-    try:
-        with connection.cursor() as cur:
-            cur.execute("""
-                SELECT DISTINCT da.accession FROM dataset_accessions da
-                JOIN publication_datasets pd ON da.accession_id = pd.accession_id
-                WHERE da.accession_type = 'GSE'
-            """)
-            all_gse = [row[0] for row in cur.fetchall()]
-            missing = [acc for acc in all_gse if acc not in registry]
-    except Exception:
-        missing = []
-
-    # Generate pipelines for missing datasets on the fly
-    for acc in missing:
-        pipeline_data = generate_pipeline_from_metadata(acc)
-        if pipeline_data and pipeline_data.get("steps"):
-            registry[acc] = pipeline_data
 
     if not registry:
         return []
@@ -2148,17 +2125,12 @@ def analysis_detail(request, pipeline_id):
 
 def analysis_detail_by_accession(request, accession):
     """Detail page for a code_examples-backed pipeline, keyed by accession."""
-    from .code_examples import get_steps_for_dataset, get_dataset_rel_path, generate_pipeline_from_metadata, get_dataset_raw_text
+    from .code_examples import get_steps_for_dataset, get_dataset_raw_text
 
     steps = get_steps_for_dataset(accession)
     if steps is None:
-        # Dynamic fallback: generate from DB metadata
-        pipeline_data = generate_pipeline_from_metadata(accession)
-        if pipeline_data and pipeline_data.get("steps"):
-            steps = pipeline_data["steps"]
-        else:
-            from django.http import Http404
-            raise Http404(f"No code examples found for {accession}")
+        from django.http import Http404
+        raise Http404(f"No code examples found for {accession}")
 
     # Lookup DB info for this accession
     pub_info = {}
