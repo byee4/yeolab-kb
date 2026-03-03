@@ -1101,6 +1101,196 @@ def _merge_control_relations(existing_relations, controls):
     return merged
 
 
+_ENCODE_PROCESSING_KEYWORDS = re.compile(
+    r"(process|pipeline|workflow|align|map|assembly|annotat|quant|normaliz|"
+    r"peak|idr|trim|adapter|qc|quality control|count|expression|call)",
+    flags=re.IGNORECASE,
+)
+
+
+def _split_text_into_processing_sentences(text):
+    """Split free text into sentence-like processing steps."""
+    if not text:
+        return []
+    normalized = re.sub(r"\s+", " ", str(text).strip())
+    if not normalized:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", normalized)
+    out = []
+    for part in parts:
+        sent = part.strip(" ;")
+        if sent:
+            out.append(sent)
+    return out
+
+
+def _extract_encode_processing_steps(exp, detail=None, files=None):
+    """
+    Derive ordered processing steps from ENCODE experiment/file metadata.
+    Returns (steps, raw_text).
+    """
+    candidate_sentences = []
+
+    def _add_sentence(text):
+        for sentence in _split_text_into_processing_sentences(text):
+            if _ENCODE_PROCESSING_KEYWORDS.search(sentence):
+                candidate_sentences.append(sentence)
+
+    assay_title = (exp.get("assay_title", "") or "").strip()
+    if assay_title:
+        _add_sentence(f"Assay type: {assay_title}.")
+
+    description = (exp.get("description", "") or "").strip()
+    if description:
+        _add_sentence(description)
+
+    biosample_summary = (exp.get("biosample_summary", "") or "").strip()
+    if biosample_summary:
+        _add_sentence(f"Biosample summary: {biosample_summary}.")
+
+    # Mine selected detail fields when available.
+    if isinstance(detail, dict):
+        for key in (
+            "analysis_step_versions",
+            "possible_controls",
+            "notes",
+            "description",
+            "assay_title",
+            "biosample_summary",
+            "status",
+            "target",
+        ):
+            value = detail.get(key)
+            if isinstance(value, str):
+                _add_sentence(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str):
+                        _add_sentence(item)
+                    elif isinstance(item, dict):
+                        for subkey in ("description", "title", "status"):
+                            if isinstance(item.get(subkey), str):
+                                _add_sentence(item.get(subkey))
+
+    # Mine file-level metadata: mapped_by/output_type/assembly frequently encode processing context.
+    mapped_bys = set()
+    output_types = set()
+    assemblies = set()
+    genome_annotations = set()
+    file_formats = set()
+    for f in files or []:
+        if not isinstance(f, dict):
+            continue
+        for key, target_set in (
+            ("mapped_by", mapped_bys),
+            ("output_type", output_types),
+            ("assembly", assemblies),
+            ("mapping_assembly", assemblies),
+            ("genome_annotation", genome_annotations),
+            ("file_format", file_formats),
+        ):
+            val = (f.get(key) or "").strip()
+            if val:
+                target_set.add(val)
+
+    for tool in sorted(mapped_bys):
+        _add_sentence(f"Mapped reads were processed using {tool}.")
+    if output_types:
+        _add_sentence(f"Generated output types include: {', '.join(sorted(output_types))}.")
+    if assemblies:
+        _add_sentence(f"Mapping assembly references include: {', '.join(sorted(assemblies))}.")
+    if genome_annotations:
+        _add_sentence(f"Genome annotations include: {', '.join(sorted(genome_annotations))}.")
+    if file_formats:
+        _add_sentence(f"Produced file formats include: {', '.join(sorted(file_formats))}.")
+
+    # De-duplicate while preserving order.
+    ordered = []
+    seen = set()
+    for sentence in candidate_sentences:
+        norm = sentence.lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+        ordered.append(sentence)
+
+    # Provide a deterministic fallback so ENCODE accessions still have an analysis page.
+    if not ordered:
+        fallback = f"ENCODE metadata processing summary for {exp.get('accession', '')}."
+        if assay_title:
+            fallback += f" Assay: {assay_title}."
+        ordered = [fallback.strip()]
+
+    steps = [
+        {"step_order": idx + 1, "description": desc}
+        for idx, desc in enumerate(ordered)
+    ]
+    raw_text = "\n".join(ordered)
+    return steps, raw_text
+
+
+def _write_encode_steps_to_code_examples(accession, raw_text, steps, method_ids):
+    """
+    Create/overwrite a dataset JSON file for ENCODE accessions using extracted metadata steps.
+    """
+    try:
+        from publications.code_examples import (
+            save_dataset_content,
+            lookup_pub_date,
+            is_dataset_locked,
+            get_registry,
+        )
+    except Exception as e:
+        _log(f"  Warning: could not import code_examples helpers for {accession}: {e}")
+        return
+
+    source_name = "encode_metadata_processing"
+    registry = get_registry() or {}
+    existing = registry.get(accession, {}) if isinstance(registry, dict) else {}
+    existing_locked = bool(existing.get("locked", True))
+    has_prior_extract = (
+        str(existing.get("raw_text_source", "")).strip() == source_name
+        and bool(str(existing.get("raw_text", "")).strip())
+    )
+
+    if has_prior_extract and is_dataset_locked(accession):
+        _log(f"  Skipping code_examples overwrite for {accession} (locked=true)")
+        return
+
+    json_steps = []
+    for step in steps:
+        desc = step.get("description", "").strip()
+        if not desc:
+            continue
+        tool_name, tool_version, _ = _detect_tool_in_step(desc, method_ids)
+        json_steps.append({
+            "step_order": len(json_steps) + 1,
+            "description": desc,
+            "tool_name": tool_name or "",
+            "tool_version": tool_version or "",
+            "code_example": "",
+            "code_language": "bash",
+            "github_url": "",
+        })
+
+    payload = {
+        "steps": json_steps,
+        "raw_text": raw_text,
+        "raw_text_source": source_name,
+        "locked": existing_locked if existing else True,
+    }
+    content = json.dumps(payload, indent=2)
+    year, month = lookup_pub_date(accession)
+    kwargs = {}
+    if year and month:
+        kwargs["year"] = year
+        kwargs["month"] = month
+    try:
+        save_dataset_content(accession, content, **kwargs)
+    except Exception as e:
+        _log(f"  Warning: failed to write code_examples for {accession}: {e}")
+
+
 def _run_encode_update(grant_list, skip_files, skip_details):
     """Background worker for ENCODE update."""
     try:
@@ -1112,7 +1302,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
         # Step 1: Find experiments for each grant
         all_experiments = {}  # accession -> experiment dict
         for grant in grant_list:
-            _log(f"[1/4] Searching ENCODE experiments for {grant}...")
+            _log(f"[1/5] Searching ENCODE experiments for {grant}...")
             results = _encode_search("Experiment", {"award.name": grant})
             if not results:
                 results = _encode_search("Experiment", {"award.project_num": grant})
@@ -1129,7 +1319,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
 
         # Step 2: Fetch experiment details (replicates, references with PMIDs)
         if not skip_details and all_experiments:
-            _log(f"[2/4] Fetching experiment details...")
+            _log(f"[2/5] Fetching experiment details...")
             count = 0
             for acc, exp in all_experiments.items():
                 count += 1
@@ -1169,13 +1359,14 @@ def _run_encode_update(grant_list, skip_files, skip_details):
                                 organisms.add(name)
                     if organisms:
                         exp["organisms"] = sorted(organisms)
+                    exp["_detail"] = detail
                 except Exception as e:
                     pass  # Non-fatal
         else:
-            _log(f"[2/4] Skipping experiment details")
+            _log(f"[2/5] Skipping experiment details")
 
         # Step 3: Insert experiments into dataset_accessions and link to PMIDs
-        _log(f"[3/4] Importing {total_experiments} experiments into database...")
+        _log(f"[3/5] Importing {total_experiments} experiments into database...")
         with connection.cursor() as cur:
             for acc, exp in all_experiments.items():
                 # Insert into dataset_accessions
@@ -1259,6 +1450,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
                             ],
                         )
                         acc_id = cur.lastrowid
+                exp["accession_id"] = acc_id
 
                 # Ensure referenced control experiments exist as ENCODE accessions.
                 # This keeps control links resolvable even if a control was not returned by grant search.
@@ -1290,7 +1482,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
 
         # Step 4: Fetch and insert file metadata
         if not skip_files and all_experiments:
-            _log(f"[4/4] Fetching file metadata...")
+            _log(f"[4/5] Fetching file metadata...")
             count = 0
             for acc in all_experiments:
                 count += 1
@@ -1304,6 +1496,7 @@ def _run_encode_update(grant_list, skip_files, skip_details):
                             "assembly", "genome_annotation", "mapped_by",
                         ],
                     })
+                    all_experiments.get(acc, {})["_files"] = files
                     with connection.cursor() as cur:
                         cur.execute(
                             "SELECT accession_id FROM dataset_accessions WHERE accession = %s",
@@ -1372,7 +1565,64 @@ def _run_encode_update(grant_list, skip_files, skip_details):
                     pass  # Non-fatal
             _log(f"  Added {total_files_added} file records")
         else:
-            _log(f"[4/4] Skipping file metadata")
+            _log(f"[4/5] Skipping file metadata")
+
+        # Step 5: Build ENCODE processing pipelines from metadata.
+        _log(f"[5/5] Building ENCODE metadata processing pipelines...")
+        method_ids = _get_method_ids()
+        encode_pipeline_count = 0
+        encode_step_count = 0
+        with connection.cursor() as cur:
+            for acc, exp in all_experiments.items():
+                acc_id = exp.get("accession_id")
+                if not acc_id:
+                    continue
+                steps, raw_text = _extract_encode_processing_steps(
+                    exp,
+                    detail=exp.get("_detail"),
+                    files=exp.get("_files") or [],
+                )
+                if not steps:
+                    continue
+
+                # Refresh ENCODE-derived pipeline for this accession on each bulk update.
+                cur.execute(
+                    """DELETE FROM pipeline_steps
+                       WHERE pipeline_id IN (
+                           SELECT pipeline_id FROM analysis_pipelines
+                           WHERE accession_id = %s AND source = 'encode_metadata_processing'
+                       )""",
+                    [acc_id],
+                )
+                cur.execute(
+                    """DELETE FROM analysis_pipelines
+                       WHERE accession_id = %s AND source = 'encode_metadata_processing'""",
+                    [acc_id],
+                )
+
+                pipeline_title = f"{acc} Data Processing"
+                pid = _insert_pipeline(
+                    cur=cur,
+                    pmid=None,
+                    accession_id=acc_id,
+                    assay_type=exp.get("assay_title", ""),
+                    title=pipeline_title,
+                    source="encode_metadata_processing",
+                    raw_text=raw_text,
+                    steps=steps,
+                    method_ids=method_ids,
+                    accession_str=acc,
+                )
+                if pid:
+                    encode_pipeline_count += 1
+                    encode_step_count += len(steps)
+
+                _write_encode_steps_to_code_examples(
+                    accession=acc,
+                    raw_text=raw_text,
+                    steps=steps,
+                    method_ids=method_ids,
+                )
 
         # Collect final stats
         with connection.cursor() as cur:
@@ -1386,9 +1636,15 @@ def _run_encode_update(grant_list, skip_files, skip_details):
                 "SELECT COUNT(*) FROM dataset_accessions WHERE database = 'ENCODE'"
             )
             stats["encode_datasets"] = cur.fetchone()[0]
+            stats["encode_pipelines"] = encode_pipeline_count
+            stats["encode_pipeline_steps"] = encode_step_count
 
         _set_status(stats=stats)
-        _log(f"ENCODE update complete! {total_experiments} experiments, {total_files_added} files, {total_links} links.")
+        _log(
+            f"ENCODE update complete! {total_experiments} experiments, "
+            f"{total_files_added} files, {total_links} links, "
+            f"{encode_pipeline_count} processing pipelines."
+        )
 
         # Log the update
         with connection.cursor() as cur:
