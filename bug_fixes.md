@@ -209,6 +209,31 @@ Users can recover from transient provider-side failures by being routed into a c
 
 ---
 
+## 2026-03-03 — Chat "Network Error" Mitigation (SSE Timeout)
+
+### Symptom
+
+Chat UI intermittently showed generic network errors during long responses/tool calls.
+
+### Root Cause
+
+The chat endpoint uses streaming HTTP responses (`text/event-stream`). With gunicorn
+worker timeout set to 120 seconds, long-running AI/tool rounds could exceed timeout,
+terminating the worker and surfacing as browser-side network failure.
+
+### Fix
+
+Made gunicorn runtime tunable in `scripts/start_web.sh` and raised default timeout:
+
+- `GUNICORN_TIMEOUT` default changed to `600`
+- Added env-driven settings:
+  - `GUNICORN_BIND` (default `0.0.0.0:8000`)
+  - `GUNICORN_WORKERS` (default `4`)
+
+Updated deployment/env documentation to include `GUNICORN_TIMEOUT`.
+
+---
+
 ## 2026-03-03 — Remove Runtime Default Pipeline Generation in Dataset/Analysis Views
 
 ### Problem
