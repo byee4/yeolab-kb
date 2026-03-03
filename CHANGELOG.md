@@ -15,3 +15,4 @@
 - Added ENCODE upload progress details in admin status, including batch counters and a rolling list of recently imported experiment accessions during import.
 - Updated ENCODE upload import parsing to fetch each uploaded accession from live ENCODE experiment JSON (`/experiments/<accession>/?format=json`) plus file metadata before deriving processing steps.
 - Refined ENCODE upload progress tracking to checkpoint and publish status per dataset (per accession), including `completed_experiments/total_experiments`, current accession, and recently parsed datasets.
+- Fixed ENCODE upload progress polling in multi-instance deployments by persisting upload state in DB and allowing status polling by `upload_id` to avoid stale `0/-` progress.
