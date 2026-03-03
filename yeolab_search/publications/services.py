@@ -145,7 +145,11 @@ _status_lock = threading.Lock()
 def get_update_status():
     """Return a copy of the current update status."""
     with _status_lock:
-        return dict(_update_status)
+        status = dict(_update_status)
+        # Return defensive copies for nested mutable fields.
+        status["log"] = list(_update_status.get("log", []))
+        status["stats"] = dict(_update_status.get("stats", {}))
+        return status
 
 
 def _set_status(**kwargs):
@@ -157,6 +161,48 @@ def _log(msg):
     with _status_lock:
         _update_status["log"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
         _update_status["progress"] = msg
+
+
+def _init_status_locked(progress_msg):
+    """Initialize shared background-update status. Caller must hold _status_lock."""
+    _update_status.update({
+        "running": True,
+        "progress": progress_msg,
+        "log": [],
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None,
+        "error": None,
+        "stats": {},
+    })
+
+
+def _start_background_worker(target, args, progress_msg):
+    """
+    Start a daemon thread for a background update with consistent status handling.
+
+    Returns:
+        True if started.
+        False if an update is already running or worker startup fails.
+    """
+    with _status_lock:
+        if _update_status["running"]:
+            return False
+        _init_status_locked(progress_msg)
+
+    try:
+        t = threading.Thread(target=target, args=args, daemon=True)
+        t.start()
+    except Exception as exc:
+        # If thread startup fails, surface a clean terminal status instead of
+        # leaving callers with ambiguous state.
+        _set_status(
+            running=False,
+            finished_at=datetime.now().isoformat(),
+            error=f"Failed to start background worker: {exc}",
+        )
+        _log(f"ERROR: Failed to start background worker: {exc}")
+        return False
+    return True
 
 
 # ============================================================
@@ -643,22 +689,11 @@ def start_full_update(mode="full"):
     if mode == "encode":
         return start_encode_update()
     _check_deps()
-    with _status_lock:
-        if _update_status["running"]:
-            return False
-        _update_status.update({
-            "running": True,
-            "progress": "Starting...",
-            "log": [],
-            "started_at": datetime.now().isoformat(),
-            "finished_at": None,
-            "error": None,
-            "stats": {},
-        })
-
-    t = threading.Thread(target=_run_update, args=(mode,), daemon=True)
-    t.start()
-    return True
+    return _start_background_worker(
+        target=_run_update,
+        args=(mode,),
+        progress_msg="Starting...",
+    )
 
 
 def _run_update(mode):
@@ -981,27 +1016,12 @@ def start_encode_update(grants=None, skip_files=False, skip_details=False):
     if not _HAS_REQUESTS:
         raise RuntimeError("Missing package: requests. Install with: pip install requests")
 
-    with _status_lock:
-        if _update_status["running"]:
-            return False
-        _update_status.update({
-            "running": True,
-            "progress": "Starting ENCODE update...",
-            "log": [],
-            "started_at": datetime.now().isoformat(),
-            "finished_at": None,
-            "error": None,
-            "stats": {},
-        })
-
     grant_list = grants or ENCODE_DEFAULT_GRANTS
-    t = threading.Thread(
+    return _start_background_worker(
         target=_run_encode_update,
         args=(grant_list, skip_files, skip_details),
-        daemon=True,
+        progress_msg="Starting ENCODE update...",
     )
-    t.start()
-    return True
 
 
 def _encode_api_get(url, params=None, label="request"):
@@ -1863,22 +1883,11 @@ def start_methods_update():
     Returns True if started, False if already running.
     No external dependencies required — works from existing DB data.
     """
-    with _status_lock:
-        if _update_status["running"]:
-            return False
-        _update_status.update({
-            "running": True,
-            "progress": "Starting methods extraction...",
-            "log": [],
-            "started_at": datetime.now().isoformat(),
-            "finished_at": None,
-            "error": None,
-            "stats": {},
-        })
-
-    t = threading.Thread(target=_run_methods_update, daemon=True)
-    t.start()
-    return True
+    return _start_background_worker(
+        target=_run_methods_update,
+        args=(),
+        progress_msg="Starting methods extraction...",
+    )
 
 
 def _run_methods_update():
@@ -2750,22 +2759,11 @@ def start_pipeline_update():
     """Start a background pipeline extraction update.
     Returns True if started, False if already running.
     Requires biopython and requests (runs locally only)."""
-    with _status_lock:
-        if _update_status["running"]:
-            return False
-        _update_status.update({
-            "running": True,
-            "progress": "Starting pipeline extraction...",
-            "log": [],
-            "started_at": datetime.now().isoformat(),
-            "finished_at": None,
-            "error": None,
-            "stats": {},
-        })
-
-    t = threading.Thread(target=_run_pipeline_update, daemon=True)
-    t.start()
-    return True
+    return _start_background_worker(
+        target=_run_pipeline_update,
+        args=(),
+        progress_msg="Starting pipeline extraction...",
+    )
 
 
 def _run_pipeline_update():
