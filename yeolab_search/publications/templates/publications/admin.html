@@ -94,6 +94,11 @@
     </button>
   </div>
   <div id="encode-upload-progress-wrap" class="mt-3 hidden">
+    <div class="flex items-center gap-2 mb-2 text-[11px]">
+      <span id="encode-stage-upload" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">1. Upload</span>
+      <span id="encode-stage-import" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">2. Import</span>
+      <span id="encode-stage-finalize" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">3. Finalize</span>
+    </div>
     <div class="w-full bg-gray-100 border rounded h-2 overflow-hidden">
       <div id="encode-upload-progress-bar" class="h-2 bg-purple-600 transition-all duration-200" style="width: 0%;"></div>
     </div>
@@ -251,6 +256,25 @@ function setEncodeUploadProgress(percent, label) {
   text.textContent = label || `${p}%`;
 }
 
+function setEncodeUploadStage(stage, status='active') {
+  const ids = ['upload', 'import', 'finalize'];
+  for (const id of ids) {
+    const el = document.getElementById(`encode-stage-${id}`);
+    if (!el) continue;
+    el.className = 'px-2 py-0.5 rounded text-[11px] bg-gray-100 text-gray-500';
+  }
+
+  const el = document.getElementById(`encode-stage-${stage}`);
+  if (!el) return;
+  if (status === 'done') {
+    el.className = 'px-2 py-0.5 rounded text-[11px] bg-green-100 text-green-700';
+  } else if (status === 'error') {
+    el.className = 'px-2 py-0.5 rounded text-[11px] bg-red-100 text-red-700';
+  } else {
+    el.className = 'px-2 py-0.5 rounded text-[11px] bg-purple-100 text-purple-700';
+  }
+}
+
 // =============================================
 // Bulk Update
 // =============================================
@@ -325,11 +349,13 @@ function uploadEncodeJson() {
   btn.disabled = true;
   showEncodeUploadResult('Uploading and importing ENCODE JSON...');
   setEncodeUploadProgress(0, 'Preparing upload...');
+  setEncodeUploadStage('upload', 'active');
 
   // Use XHR for real upload progress events.
   const xhr = new XMLHttpRequest();
   let importTick = null;
-  let importProgress = 50;
+  let importProgress = 52;
+  const startedAt = Date.now();
 
   xhr.open('POST', '{% url "publications:admin_upload_encode_json" %}', true);
   xhr.setRequestHeader('X-CSRFToken', csrfToken);
@@ -342,12 +368,15 @@ function uploadEncodeJson() {
   };
 
   xhr.upload.onload = () => {
+    setEncodeUploadStage('upload', 'done');
+    setEncodeUploadStage('import', 'active');
     setEncodeUploadProgress(50, 'Upload complete. Importing...');
     // Simulate import phase progress until server responds.
     importTick = setInterval(() => {
-      importProgress = Math.min(95, importProgress + 2);
-      setEncodeUploadProgress(importProgress, `Importing... ${importProgress}%`);
-    }, 350);
+      importProgress = Math.min(94, importProgress + (importProgress < 80 ? 3 : 1));
+      const elapsed = Math.round((Date.now() - startedAt) / 1000);
+      setEncodeUploadProgress(importProgress, `Importing ENCODE experiments... ${importProgress}% (${elapsed}s)`);
+    }, 300);
   };
 
   xhr.onreadystatechange = () => {
@@ -359,15 +388,22 @@ function uploadEncodeJson() {
 
     if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
       const stats = data.stats || {};
+      setEncodeUploadStage('import', 'done');
+      setEncodeUploadStage('finalize', 'active');
+      const summary = `Loaded ${stats.experiments_loaded ?? 0} experiments; synced ${stats.encode_json_synced ?? 0} JSON files; created ${stats.encode_pipelines ?? 0} pipelines.`;
       const lines = [
         data.message || 'Import complete.',
+        summary,
         '',
         ...Object.entries(stats).map(([k, v]) => `${k}: ${v}`),
       ];
+      setEncodeUploadStage('finalize', 'done');
       setEncodeUploadProgress(100, 'Done');
       showEncodeUploadResult(lines.join('\n'));
     } else {
       const msg = data.message || `HTTP ${xhr.status}`;
+      const failedStage = importProgress >= 50 ? 'import' : 'upload';
+      setEncodeUploadStage(failedStage, 'error');
       setEncodeUploadProgress(100, 'Failed');
       showEncodeUploadResult(`Upload failed: ${msg}`, true);
     }
@@ -376,6 +412,8 @@ function uploadEncodeJson() {
 
   xhr.onerror = () => {
     if (importTick) clearInterval(importTick);
+    const failedStage = importProgress >= 50 ? 'import' : 'upload';
+    setEncodeUploadStage(failedStage, 'error');
     setEncodeUploadProgress(100, 'Failed');
     showEncodeUploadResult('Upload failed: network error', true);
     btn.disabled = false;
