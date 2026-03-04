@@ -1135,6 +1135,10 @@ ENCODE_HEADERS = {
     "accept": "application/json",
     "User-Agent": "YeoLabDjango/1.0 (brian.alan.yee@gmail.com)",
 }
+_ENCODE_SOFTWARE_CACHE = {}
+ENCODE_SOFTWARE_RESOLVE_DELAY = float(os.getenv("ENCODE_SOFTWARE_RESOLVE_DELAY", "2.5"))
+_encode_software_call_lock = threading.Lock()
+_encode_last_software_call_ts = 0.0
 
 
 def start_encode_update(grants=None, skip_files=False, skip_details=False):
@@ -1253,7 +1257,7 @@ def _encode_fetch_experiment_and_files(accession):
 
     # Fallback: if file search returned nothing, expand from embedded file refs.
     if not files:
-        files = _encode_expand_file_records(detail.get("files", []))
+        files = _encode_expand_file_records(detail.get("files", []) or detail.get("original_files", []))
 
     # If search yielded incomplete rows, merge/replace with expanded detail files.
     if files:
@@ -1265,7 +1269,7 @@ def _encode_fetch_experiment_and_files(accession):
             if not str(f.get("accession", "")).strip() or not str(f.get("file_format", "")).strip():
                 incomplete += 1
         if incomplete:
-            expanded = _encode_expand_file_records(detail.get("files", []))
+            expanded = _encode_expand_file_records(detail.get("files", []) or detail.get("original_files", []))
             if expanded:
                 by_acc = {}
                 for f in files:
@@ -1456,7 +1460,7 @@ def _encode_resolve_software_info(sw_ver, software_cache=None):
     Resolve ENCODE analysis software name/version from embedded dicts or URIs.
     Returns a normalized string like "STAR(2.7.10a)".
     """
-    cache = software_cache if isinstance(software_cache, dict) else {}
+    cache = software_cache if isinstance(software_cache, dict) else _ENCODE_SOFTWARE_CACHE
 
     if isinstance(sw_ver, dict):
         sw_info = sw_ver.get("software", {})
@@ -1479,11 +1483,24 @@ def _encode_resolve_software_info(sw_ver, software_cache=None):
     if not clean_uri.endswith("/"):
         clean_uri = f"{clean_uri}/"
     try:
-        info = _encode_api_get(
+        # Throttle software-version lookups to avoid ENCODE lockouts.
+        global _encode_last_software_call_ts
+        with _encode_software_call_lock:
+            now = time.time()
+            elapsed = now - _encode_last_software_call_ts
+            wait = max(0.0, ENCODE_SOFTWARE_RESOLVE_DELAY - elapsed)
+            if wait > 0:
+                time.sleep(wait)
+            _encode_last_software_call_ts = time.time()
+
+        resp = _requests.get(
             f"{ENCODE_BASE_URL}{clean_uri}",
             params={"format": "json"},
-            label=f"software-version {clean_uri}",
+            headers=ENCODE_HEADERS,
+            timeout=min(ENCODE_TIMEOUT, 8.0),
         )
+        resp.raise_for_status()
+        info = resp.json()
         if isinstance(info, dict):
             version = str(info.get("version", "v?")).strip() or "v?"
             sw_field = info.get("software", {})
@@ -1525,6 +1542,7 @@ def _encode_flatten_processing_lines(exp, detail=None, files=None):
 
         step_name = "N/A"
         software_used = []
+        mapped_by_val = str(f.get("mapped_by", "")).strip()
         step_ver_obj = None
         step_run = f.get("step_run")
         if isinstance(step_run, dict) and isinstance(step_run.get("analysis_step_version"), dict):
@@ -1540,6 +1558,8 @@ def _encode_flatten_processing_lines(exp, detail=None, files=None):
                 resolved = _encode_resolve_software_info(sw_ver, software_cache=software_cache)
                 if resolved:
                     software_used.append(resolved)
+        if not software_used and mapped_by_val:
+            software_used.append(mapped_by_val)
 
         qc_summaries = []
         for qc in f.get("quality_metrics", []) or []:
@@ -1594,77 +1614,78 @@ def _extract_encode_processing_steps(exp, detail=None, files=None):
             if (not require_keyword) or _ENCODE_PROCESSING_KEYWORDS.search(sentence):
                 candidate_sentences.append(sentence)
 
-    assay_title = (exp.get("assay_title", "") or "").strip()
-    if assay_title:
-        _add_sentence(f"Assay type: {assay_title}.")
+    flattened_lines = _encode_flatten_processing_lines(exp, detail=detail, files=files)
+    if flattened_lines:
+        for line in flattened_lines:
+            _add_sentence(line, require_keyword=False)
+    else:
+        assay_title = (exp.get("assay_title", "") or "").strip()
+        if assay_title:
+            _add_sentence(f"Assay type: {assay_title}.")
 
-    description = (exp.get("description", "") or "").strip()
-    if description:
-        _add_sentence(description)
+        description = (exp.get("description", "") or "").strip()
+        if description:
+            _add_sentence(description)
 
-    biosample_summary = (exp.get("biosample_summary", "") or "").strip()
-    if biosample_summary:
-        _add_sentence(f"Biosample summary: {biosample_summary}.")
+        biosample_summary = (exp.get("biosample_summary", "") or "").strip()
+        if biosample_summary:
+            _add_sentence(f"Biosample summary: {biosample_summary}.")
 
-    # Mine selected detail fields when available.
-    if isinstance(detail, dict):
-        for key in (
-            "analysis_step_versions",
-            "possible_controls",
-            "notes",
-            "description",
-            "assay_title",
-            "biosample_summary",
-            "status",
-            "target",
-        ):
-            value = detail.get(key)
-            if isinstance(value, str):
-                _add_sentence(value)
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, str):
-                        _add_sentence(item)
-                    elif isinstance(item, dict):
-                        for subkey in ("description", "title", "status"):
-                            if isinstance(item.get(subkey), str):
-                                _add_sentence(item.get(subkey))
+        # Mine selected detail fields when available.
+        if isinstance(detail, dict):
+            for key in (
+                "analysis_step_versions",
+                "possible_controls",
+                "notes",
+                "description",
+                "assay_title",
+                "biosample_summary",
+                "status",
+                "target",
+            ):
+                value = detail.get(key)
+                if isinstance(value, str):
+                    _add_sentence(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, str):
+                            _add_sentence(item)
+                        elif isinstance(item, dict):
+                            for subkey in ("description", "title", "status"):
+                                if isinstance(item.get(subkey), str):
+                                    _add_sentence(item.get(subkey))
 
-    # Mine file-level metadata: mapped_by/output_type/assembly frequently encode processing context.
-    mapped_bys = set()
-    output_types = set()
-    assemblies = set()
-    genome_annotations = set()
-    file_formats = set()
-    for f in files or []:
-        if not isinstance(f, dict):
-            continue
-        for key, target_set in (
-            ("mapped_by", mapped_bys),
-            ("output_type", output_types),
-            ("assembly", assemblies),
-            ("mapping_assembly", assemblies),
-            ("genome_annotation", genome_annotations),
-            ("file_format", file_formats),
-        ):
-            val = (f.get(key) or "").strip()
-            if val:
-                target_set.add(val)
+        # Mine file-level metadata: mapped_by/output_type/assembly frequently encode processing context.
+        mapped_bys = set()
+        output_types = set()
+        assemblies = set()
+        genome_annotations = set()
+        file_formats = set()
+        for f in files or []:
+            if not isinstance(f, dict):
+                continue
+            for key, target_set in (
+                ("mapped_by", mapped_bys),
+                ("output_type", output_types),
+                ("assembly", assemblies),
+                ("mapping_assembly", assemblies),
+                ("genome_annotation", genome_annotations),
+                ("file_format", file_formats),
+            ):
+                val = (f.get(key) or "").strip()
+                if val:
+                    target_set.add(val)
 
-    for tool in sorted(mapped_bys):
-        _add_sentence(f"Mapped reads were processed using {tool}.")
-    if output_types:
-        _add_sentence(f"Generated output types include: {', '.join(sorted(output_types))}.")
-    if assemblies:
-        _add_sentence(f"Mapping assembly references include: {', '.join(sorted(assemblies))}.")
-    if genome_annotations:
-        _add_sentence(f"Genome annotations include: {', '.join(sorted(genome_annotations))}.")
-    if file_formats:
-        _add_sentence(f"Produced file formats include: {', '.join(sorted(file_formats))}.")
-
-    # Refined flattened metadata parsing: emit one processing line per file.
-    for line in _encode_flatten_processing_lines(exp, detail=detail, files=files):
-        _add_sentence(line, require_keyword=False)
+        for tool in sorted(mapped_bys):
+            _add_sentence(f"Mapped reads were processed using {tool}.")
+        if output_types:
+            _add_sentence(f"Generated output types include: {', '.join(sorted(output_types))}.")
+        if assemblies:
+            _add_sentence(f"Mapping assembly references include: {', '.join(sorted(assemblies))}.")
+        if genome_annotations:
+            _add_sentence(f"Genome annotations include: {', '.join(sorted(genome_annotations))}.")
+        if file_formats:
+            _add_sentence(f"Produced file formats include: {', '.join(sorted(file_formats))}.")
 
     # De-duplicate while preserving order.
     ordered = []
@@ -1679,6 +1700,7 @@ def _extract_encode_processing_steps(exp, detail=None, files=None):
     # Provide a deterministic fallback so ENCODE accessions still have an analysis page.
     if not ordered:
         fallback = f"ENCODE metadata processing summary for {exp.get('accession', '')}."
+        assay_title = (exp.get("assay_title", "") or "").strip()
         if assay_title:
             fallback += f" Assay: {assay_title}."
         ordered = [fallback.strip()]

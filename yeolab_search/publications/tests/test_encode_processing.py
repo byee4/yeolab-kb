@@ -88,10 +88,36 @@ class EncodeProcessingExtractionTests(SimpleTestCase):
 
         steps, raw_text = services._extract_encode_processing_steps(exp, detail=detail, files=files)
 
-        self.assertGreaterEqual(len(steps), 3)
+        self.assertEqual(len(steps), 1)
         self.assertIn("STAR", raw_text)
         self.assertIn("alignments", raw_text)
         self.assertIn("hg38", raw_text)
+
+    def test_extract_encode_processing_steps_prefers_flattened_file_lines(self):
+        exp = {
+            "accession": "ENCSR875UMY",
+            "assay_title": "RNA-seq",
+            "description": "Long description that should not be emitted when file lines exist.",
+            "biosample_summary": "K562",
+        }
+        files = [
+            {
+                "accession": "ENCFF424AFE",
+                "file_format": "bam",
+                "output_type": "alignments",
+                "assembly": "GRCh38",
+                "biological_replicates": [2],
+                "analysis_step_version": {
+                    "analysis_step": {"name": "bulk-rna-seq-alignment-step-v-1"},
+                    "software_versions": [],
+                },
+                "quality_metrics": [],
+            }
+        ]
+        steps, raw_text = services._extract_encode_processing_steps(exp, detail={}, files=files)
+        self.assertEqual(len(steps), 1)
+        self.assertIn("ENCFF424AFE.bam | alignments | GRCh38 | 2 |", raw_text)
+        self.assertNotIn("Biosample summary:", raw_text)
 
     def test_extract_encode_processing_steps_has_fallback(self):
         exp = {"accession": "ENCSR000AAA", "assay_title": "", "description": ""}
