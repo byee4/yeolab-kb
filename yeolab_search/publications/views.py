@@ -2088,9 +2088,10 @@ def _build_code_example_pipelines():
     Build pipeline-like data structures from the code_examples JSON registry.
     Returns a list of dicts that mirror AnalysisPipeline + steps.
     """
-    from .code_examples import get_registry, get_dataset_rel_path
+    from .code_examples import get_registry, get_paths_map
 
     registry = dict(get_registry())  # copy so we don't mutate the original
+    paths_map = dict(get_paths_map())
 
     if not registry:
         return []
@@ -2163,7 +2164,7 @@ def _build_code_example_pipelines():
             continue
 
         info = accession_info.get(acc, {})
-        rel_path = get_dataset_rel_path(acc) or ""
+        rel_path = paths_map.get(acc, "") or ""
 
         pipeline = {
             "id": acc,  # Use accession as pipeline ID
@@ -2236,7 +2237,7 @@ def analysis_list(request):
     )
 
     # Build code_examples-backed pipelines
-    ce_pipelines = _build_code_example_pipelines()
+    ce_pipelines = _get_cached_code_example_pipelines()
     ce_by_accession = {
         p.get("accession"): p for p in ce_pipelines if p.get("accession")
     }

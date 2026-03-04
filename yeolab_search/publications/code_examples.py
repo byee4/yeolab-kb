@@ -16,6 +16,8 @@ GitHub sync uses ``publications/github_sync.py``.
 import glob
 import json
 import os
+import threading
+import time
 
 # ---------------------------------------------------------------------------
 # Month abbreviation helper
@@ -55,6 +57,9 @@ if _env_dir:
 # In-memory stores
 _REGISTRY: dict = {}       # accession → data dict (with "steps" list)
 _PATHS: dict = {}           # accession → relative path from base dir (e.g. "2020/Oct")
+_REGISTRY_LOCK = threading.Lock()
+_LAST_REFRESH_TS = 0.0
+_REFRESH_INTERVAL_SEC = float(os.environ.get("CODE_EXAMPLES_REFRESH_INTERVAL_SEC", "10"))
 
 
 def _find_dir() -> str | None:
@@ -111,11 +116,13 @@ def _load_registry() -> tuple[dict, dict]:
 
 def reload_registry():
     """Force-reload all dataset files from disk."""
-    global _REGISTRY, _PATHS
-    _REGISTRY, _PATHS = _load_registry()
+    global _REGISTRY, _PATHS, _LAST_REFRESH_TS
+    with _REGISTRY_LOCK:
+        _REGISTRY, _PATHS = _load_registry()
+        _LAST_REFRESH_TS = time.monotonic()
 
 
-def _ensure_fresh_registry():
+def _ensure_fresh_registry(force: bool = False):
     """
     Refresh in-memory registry from disk.
 
@@ -123,7 +130,16 @@ def _ensure_fresh_registry():
     memory, so relying on a one-time import cache can make pages show stale
     steps after edits/sync/extract in another worker.
     """
-    reload_registry()
+    global _REGISTRY, _PATHS, _LAST_REFRESH_TS
+    now = time.monotonic()
+    if not force and (now - _LAST_REFRESH_TS) < _REFRESH_INTERVAL_SEC:
+        return
+    with _REGISTRY_LOCK:
+        now2 = time.monotonic()
+        if not force and (now2 - _LAST_REFRESH_TS) < _REFRESH_INTERVAL_SEC:
+            return
+        _REGISTRY, _PATHS = _load_registry()
+        _LAST_REFRESH_TS = time.monotonic()
 
 
 # Load at import time
@@ -134,6 +150,12 @@ def get_registry() -> dict:
     """Return the current in-memory registry dict."""
     _ensure_fresh_registry()
     return _REGISTRY
+
+
+def get_paths_map() -> dict:
+    """Return accession -> relative path map for the loaded registry."""
+    _ensure_fresh_registry()
+    return _PATHS
 
 
 def get_dir_path() -> str | None:
