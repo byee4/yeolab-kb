@@ -1453,6 +1453,7 @@ _ENCODE_PROCESSING_KEYWORDS = re.compile(
     r"peak|idr|trim|adapter|qc|quality control|count|expression|call)",
     flags=re.IGNORECASE,
 )
+_ENCODE_FALLBACK_PREFIX = "encode metadata processing summary for "
 
 
 def _encode_resolve_software_info(sw_ver, software_cache=None):
@@ -1602,6 +1603,11 @@ def _split_text_into_processing_sentences(text):
     return out
 
 
+def _is_encode_fallback_text(text):
+    s = str(text or "").strip().lower()
+    return s.startswith(_ENCODE_FALLBACK_PREFIX)
+
+
 def _extract_encode_processing_steps(exp, detail=None, files=None):
     """
     Derive ordered processing steps from ENCODE experiment/file metadata.
@@ -1732,12 +1738,14 @@ def _write_encode_steps_to_code_examples(accession, raw_text, steps, method_ids,
     registry = get_registry() or {}
     existing = registry.get(accession, {}) if isinstance(registry, dict) else {}
     existing_locked = bool(existing.get("locked", True))
+    existing_raw_text = str(existing.get("raw_text", "") or "").strip()
     has_prior_extract = (
         str(existing.get("raw_text_source", "")).strip() == source_name
-        and bool(str(existing.get("raw_text", "")).strip())
+        and bool(existing_raw_text)
     )
+    existing_is_fallback = _is_encode_fallback_text(existing_raw_text)
 
-    if has_prior_extract and is_dataset_locked(accession) and not force_override:
+    if has_prior_extract and is_dataset_locked(accession) and not force_override and not existing_is_fallback:
         _log(f"  Skipping code_examples overwrite for {accession} (locked=true)")
         return
 
@@ -2492,6 +2500,23 @@ def import_encode_experiments_from_search_payload(
                 detail=exp.get("_detail"),
                 files=exp.get("_files") or [],
             )
+            if fetch_live_details and _is_encode_fallback_text(raw_text):
+                # Second-chance refetch for entries that still resolved to fallback.
+                try:
+                    detail2, files2 = _encode_fetch_experiment_and_files(acc)
+                    if detail2:
+                        exp["_detail"] = detail2
+                    if files2:
+                        exp["_files"] = files2
+                    steps2, raw_text2 = _extract_encode_processing_steps(
+                        exp,
+                        detail=exp.get("_detail"),
+                        files=exp.get("_files") or [],
+                    )
+                    if not _is_encode_fallback_text(raw_text2):
+                        steps, raw_text = steps2, raw_text2
+                except Exception:
+                    pass
             if not steps:
                 continue
 
@@ -2511,13 +2536,28 @@ def import_encode_experiments_from_search_payload(
 
             if not override_existing:
                 cur.execute(
-                    """SELECT 1 FROM analysis_pipelines
+                    """SELECT pipeline_id, raw_text FROM analysis_pipelines
                        WHERE accession_id = %s AND source = 'encode_metadata_processing'
+                       ORDER BY pipeline_id DESC
                        LIMIT 1""",
                     [acc_id],
                 )
-                if cur.fetchone():
-                    continue
+                existing_pipe = cur.fetchone()
+                if existing_pipe:
+                    existing_raw_text = existing_pipe[1] if len(existing_pipe) > 1 else ""
+                    if not _is_encode_fallback_text(existing_raw_text):
+                        continue
+                    # Replace stale fallback pipeline even without override.
+                    cur.execute(
+                        """DELETE FROM pipeline_steps
+                           WHERE pipeline_id = %s""",
+                        [existing_pipe[0]],
+                    )
+                    cur.execute(
+                        """DELETE FROM analysis_pipelines
+                           WHERE pipeline_id = %s""",
+                        [existing_pipe[0]],
+                    )
             else:
                 cur.execute(
                     """DELETE FROM pipeline_steps
