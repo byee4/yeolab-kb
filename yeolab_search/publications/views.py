@@ -2147,15 +2147,31 @@ def _build_code_example_pipelines():
     except Exception:
         pass
 
-    # Lookup method IDs for tool names
+    # Lookup method IDs for tool names used by current code-example steps.
+    tool_names = set()
+    for data in registry.values():
+        for step in data.get("steps", []):
+            tool_name = (step.get("tool_name") or "").strip().lower()
+            if tool_name:
+                tool_names.add(tool_name)
+
     method_ids = {}
-    try:
-        with connection.cursor() as cur:
-            cur.execute("SELECT method_id, canonical_name FROM computational_methods")
-            for row in cur.fetchall():
-                method_ids[row[1].lower()] = {"method_id": row[0], "canonical_name": row[1]}
-    except Exception:
-        pass
+    if tool_names:
+        try:
+            with connection.cursor() as cur:
+                placeholders = ",".join(["%s"] * len(tool_names))
+                cur.execute(
+                    f"""
+                        SELECT method_id, canonical_name
+                        FROM computational_methods
+                        WHERE LOWER(canonical_name) IN ({placeholders})
+                    """,
+                    list(tool_names),
+                )
+                for row in cur.fetchall():
+                    method_ids[row[1].lower()] = {"method_id": row[0], "canonical_name": row[1]}
+        except Exception:
+            pass
 
     pipelines = []
     for acc, data in sorted(registry.items()):
