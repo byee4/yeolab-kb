@@ -136,3 +136,27 @@ class EncodeProcessingExtractionTests(SimpleTestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["accession"], "ENCSR001AAA")
+
+    def test_start_encode_upload_override_resets_resume_checkpoint(self):
+        payload = {"@graph": [{"accession": "ENCSR423ERM"}, {"accession": "ENCSR488JKQ"}]}
+        with (
+            patch("publications.services._save_encode_upload_payload"),
+            patch("publications.services._load_encode_upload_state", return_value={
+                "next_batch": 2,
+                "next_index": 50,
+                "completed": False,
+            }),
+            patch("publications.services._save_encode_upload_state") as save_state_mock,
+            patch("publications.services._start_background_worker", return_value=True),
+        ):
+            started = services.start_encode_json_upload_import(
+                payload=payload,
+                grant_label="U41HG009889",
+                batch_size=25,
+                override_existing=True,
+            )
+
+        self.assertTrue(started["ok"])
+        self.assertEqual(started["resume_from_batch"], 0)
+        self.assertEqual(started["resume_from_experiment"], 0)
+        save_state_mock.assert_called_once()

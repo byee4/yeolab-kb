@@ -1445,9 +1445,9 @@ def _extract_encode_processing_steps(exp, detail=None, files=None):
     """
     candidate_sentences = []
 
-    def _add_sentence(text):
+    def _add_sentence(text, require_keyword=True):
         for sentence in _split_text_into_processing_sentences(text):
-            if _ENCODE_PROCESSING_KEYWORDS.search(sentence):
+            if (not require_keyword) or _ENCODE_PROCESSING_KEYWORDS.search(sentence):
                 candidate_sentences.append(sentence)
 
     assay_title = (exp.get("assay_title", "") or "").strip()
@@ -1520,7 +1520,7 @@ def _extract_encode_processing_steps(exp, detail=None, files=None):
 
     # Refined flattened metadata parsing: emit one processing line per file.
     for line in _encode_flatten_processing_lines(exp, detail=detail, files=files):
-        _add_sentence(line)
+        _add_sentence(line, require_keyword=False)
 
     # De-duplicate while preserving order.
     ordered = []
@@ -2409,7 +2409,7 @@ def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_
     next_index = int(state.get("next_index", next_batch * batch_size) or 0)
     total_batches = (len(graph) + batch_size - 1) // batch_size
     completed = bool(state.get("completed", False))
-    if completed:
+    if completed or override_existing:
         next_batch = 0
         next_index = 0
         state = {}
