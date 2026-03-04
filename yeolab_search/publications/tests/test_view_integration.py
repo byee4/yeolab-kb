@@ -207,7 +207,7 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
 
         request = self.rf.post(
             "/admin/upload-encode-json/",
-            {"grant_label": "U41HG009889", "json_file": upload},
+            {"grant_label": "U41HG009889", "override_existing": "1", "json_file": upload},
         )
         request.user = SimpleNamespace(is_authenticated=True)
         request._dont_enforce_csrf_checks = True
@@ -215,3 +215,5 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
         response = views.admin_upload_encode_json(request)
         self.assertEqual(response.status_code, 200)
         import_mock.assert_called_once()
+        kwargs = import_mock.call_args.kwargs
+        self.assertTrue(kwargs["override_existing"])
