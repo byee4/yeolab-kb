@@ -117,6 +117,7 @@
       <span id="encode-stage-upload" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">1. Upload</span>
       <span id="encode-stage-import" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">2. Import</span>
       <span id="encode-stage-finalize" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">3. Finalize</span>
+      <span id="encode-resume-indicator" class="ml-auto px-2 py-0.5 rounded bg-gray-100 text-gray-600">Resume: 0/0</span>
     </div>
     <div class="w-full bg-gray-100 border rounded h-2 overflow-hidden">
       <div id="encode-upload-progress-bar" class="h-2 bg-purple-600 transition-all duration-200" style="width: 0%;"></div>
@@ -277,6 +278,21 @@ function setEncodeUploadProgress(percent, label) {
   text.textContent = label || `${p}%`;
 }
 
+function setEncodeResumeIndicator(done, total, state='running') {
+  const el = document.getElementById('encode-resume-indicator');
+  if (!el) return;
+  const d = Number(done || 0);
+  const t = Number(total || 0);
+  el.textContent = `Resume: ${d}/${t}`;
+  if (state === 'stopped') {
+    el.className = 'ml-auto px-2 py-0.5 rounded bg-yellow-100 text-yellow-800';
+  } else if (state === 'done') {
+    el.className = 'ml-auto px-2 py-0.5 rounded bg-green-100 text-green-700';
+  } else {
+    el.className = 'ml-auto px-2 py-0.5 rounded bg-gray-100 text-gray-600';
+  }
+}
+
 function setEncodeUploadStage(stage, status='active') {
   const ids = ['upload', 'import', 'finalize'];
   for (const id of ids) {
@@ -411,6 +427,7 @@ function uploadEncodeJson() {
       const resumeBatch = data.resume_from_batch || 0;
       const resumeExperiment = data.resume_from_experiment || 0;
       const total = data.total_experiments || 0;
+      setEncodeResumeIndicator(resumeExperiment, total, 'running');
       showEncodeUploadResult(
         `${data.message || 'Import started.'}\nupload_id: ${uploadId}\nresume_from_batch: ${resumeBatch}\nresume_from_experiment: ${resumeExperiment}\ntotal_experiments: ${total}\n\nWaiting for import progress...`
       );
@@ -468,6 +485,8 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
           pct = basePct + Math.min(49, Math.round((completedBatches / totalBatches) * 49));
         }
         setEncodeUploadStage('import', 'active');
+        const runState = (stats.canceled || stats.cancel_requested) ? 'stopped' : (data.running ? 'running' : 'done');
+        setEncodeResumeIndicator(completedExperiments, totalExperiments, runState);
         setEncodeUploadProgress(
           pct,
           `Parsing dataset ${completedExperiments}/${totalExperiments || '?'} (${statusUploadId || 'pending id'})`
