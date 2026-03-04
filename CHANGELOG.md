@@ -13,6 +13,7 @@
 - Added admin ENCODE JSON upload/import flow for pre-downloaded ENCODE Experiment search payloads (`@graph`), including dataset import, publication linking, processing-step extraction, analysis pipeline sync, and code_examples sync.
 - Added direct ENCSR experiment JSON upload support (multi-file `ENCSR*.json`) that parses embedded experiment metadata and file-level processing steps without live ENCODE API fetch.
 - Extended `sync_code_examples` to also read `ENCODEPROJECT_metadata/` from GitHub and populate ENC* dataset processing metadata from those JSON files.
+- Improved analysis-page performance by throttling `code_examples` registry reloads (configurable refresh interval) and using cached code-example pipeline lists in analysis browsing.
 - Added resumable ENCODE JSON batch import for uploaded payloads to avoid long blocking requests/timeouts (e.g., HTTP 524), with persisted checkpoint state by upload ID and automatic resume from the last completed batch.
 - Added ENCODE upload progress details in admin status, including batch counters and a rolling list of recently imported experiment accessions during import.
 - Updated ENCODE upload import parsing to fetch each uploaded accession from live ENCODE experiment JSON (`/experiments/<accession>/?format=json`) plus file metadata before deriving processing steps.
