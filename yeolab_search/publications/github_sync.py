@@ -221,6 +221,84 @@ def list_remote_datasets():
         raise RuntimeError(f"Failed to list remote datasets: {e}")
 
 
+def list_remote_json_files(remote_dir: str):
+    """
+    List JSON files under an arbitrary remote directory (recursive).
+    Returns: [{"path": "...", "name": "...", "sha": "...", "size": N}, ...]
+    """
+    repo, branch, pat = _get_config()
+    target = (remote_dir or "").strip("/").strip()
+    if not target:
+        raise RuntimeError("remote_dir is required")
+
+    # Try trees API first (single call)
+    try:
+        url = f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1"
+        data = _api_get(url, pat)
+        out = []
+        prefix = f"{target}/"
+        for item in data.get("tree", []):
+            if item.get("type") != "blob":
+                continue
+            path = str(item.get("path", ""))
+            if not path.startswith(prefix) or not path.endswith(".json"):
+                continue
+            out.append({
+                "path": path,
+                "name": os.path.basename(path),
+                "sha": item.get("sha", ""),
+                "size": item.get("size", 0),
+            })
+        return sorted(out, key=lambda x: x["path"])
+    except Exception:
+        pass
+
+    # Fallback to contents API recursion
+    def _walk(dir_path):
+        url = f"https://api.github.com/repos/{repo}/contents/{dir_path}?ref={branch}"
+        data = _api_get(url, pat)
+        if not isinstance(data, list):
+            return []
+        out = []
+        for item in data:
+            if item.get("type") == "dir":
+                out.extend(_walk(item["path"]))
+            elif item.get("type") == "file" and str(item.get("name", "")).endswith(".json"):
+                out.append({
+                    "path": item.get("path", ""),
+                    "name": item.get("name", ""),
+                    "sha": item.get("sha", ""),
+                    "size": item.get("size", 0),
+                })
+        return out
+
+    try:
+        return sorted(_walk(target), key=lambda x: x["path"])
+    except Exception as e:
+        raise RuntimeError(f"Failed to list remote JSON files under {target}: {e}")
+
+
+def fetch_remote_json_file(path: str):
+    """
+    Fetch an arbitrary remote JSON file by full repository path.
+    Returns (content_str, sha).
+    """
+    repo, branch, pat = _get_config()
+    clean = (path or "").strip("/")
+    if not clean:
+        raise RuntimeError("path is required")
+
+    url = f"https://api.github.com/repos/{repo}/contents/{clean}?ref={branch}"
+    try:
+        data = _api_get(url, pat)
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch {clean}: {e}")
+    if data.get("encoding") != "base64":
+        raise RuntimeError(f"Unexpected encoding for {clean}: {data.get('encoding')}")
+    content = base64.b64decode(data["content"]).decode("utf-8")
+    return content, data.get("sha", "")
+
+
 def fetch_dataset(accession: str, rel_path: str | None = None):
     """
     Fetch a single dataset file from GitHub.

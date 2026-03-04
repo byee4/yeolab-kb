@@ -129,6 +129,30 @@
   </div>
 </div>
 
+<!-- ENCODE Experiment File Upload -->
+<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Upload ENCSR Metadata Files</h2>
+  <p class="text-sm text-gray-600 mb-4">
+    Upload one or more experiment JSON files (for example <code class="bg-gray-100 px-1 rounded text-xs">ENCSR251CSO.json</code>).
+    These are parsed directly using file-level ENCODE metadata (one processing step per file line).
+  </p>
+  <div class="flex flex-wrap gap-2 items-center">
+    <input type="file" id="encode-experiment-files" accept=".json,application/json" multiple
+           class="px-3 py-2 border border-gray-300 rounded text-sm bg-white">
+    <label class="flex items-center gap-1 text-xs text-gray-500">
+      <input type="checkbox" id="encode-experiment-override" class="rounded border-gray-300">
+      Override existing ENCODE processing steps
+    </label>
+    <button onclick="uploadEncodeExperimentFiles()" id="btn-encode-files-upload"
+            class="px-4 py-2 bg-purple-700 text-white text-sm rounded hover:bg-purple-800 transition disabled:opacity-50">
+      Upload ENCSR Files
+    </button>
+  </div>
+  <div id="encode-files-result" class="mt-4 hidden">
+    <pre id="encode-files-output" class="bg-gray-50 rounded border p-3 text-xs font-mono text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
+  </div>
+</div>
+
 <!-- Code Examples Sync -->
 <div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
   <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Code Examples</h2>
@@ -262,6 +286,15 @@ function postJSON(url, body) {
 function showEncodeUploadResult(text, isError=false) {
   const box = document.getElementById('encode-upload-result');
   const out = document.getElementById('encode-upload-output');
+  box.classList.remove('hidden');
+  out.textContent = text;
+  out.className = 'bg-gray-50 rounded border p-3 text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto ' +
+    (isError ? 'text-red-700 border-red-200 bg-red-50' : 'text-gray-600');
+}
+
+function showEncodeFilesResult(text, isError=false) {
+  const box = document.getElementById('encode-files-result');
+  const out = document.getElementById('encode-files-output');
   box.classList.remove('hidden');
   out.textContent = text;
   out.className = 'bg-gray-50 rounded border p-3 text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto ' +
@@ -453,6 +486,50 @@ function uploadEncodeJson() {
   };
 
   xhr.send(form);
+}
+
+function uploadEncodeExperimentFiles() {
+  const input = document.getElementById('encode-experiment-files');
+  const override = document.getElementById('encode-experiment-override');
+  const btn = document.getElementById('btn-encode-files-upload');
+  const files = input.files ? Array.from(input.files) : [];
+  if (!files.length) {
+    showEncodeFilesResult('Please choose one or more ENCSR JSON files.', true);
+    return;
+  }
+  const form = new FormData();
+  for (const f of files) form.append('json_files', f);
+  if (override && override.checked) form.append('override_existing', '1');
+
+  btn.disabled = true;
+  showEncodeFilesResult(`Uploading ${files.length} file(s)...`);
+  fetch('{% url "publications:admin_upload_encode_experiment_files" %}', {
+    method: 'POST',
+    headers: {'X-CSRFToken': csrfToken},
+    body: form,
+  })
+    .then(r => r.json().then(data => ({status: r.status, data})))
+    .then(({status, data}) => {
+      if (status >= 200 && status < 300 && data.ok) {
+        const stats = data.stats || {};
+        const lines = [
+          data.message || 'Processed.',
+          `experiments_loaded: ${stats.experiments_loaded ?? '-'}`,
+          `encode_json_synced: ${stats.encode_json_synced ?? '-'}`,
+          `encode_pipelines: ${stats.encode_pipelines ?? '-'}`,
+          `encode_pipeline_steps: ${stats.encode_pipeline_steps ?? '-'}`,
+        ];
+        const errs = data.errors || [];
+        if (errs.length) {
+          lines.push('', 'Errors:', ...errs.map(e => `- ${JSON.stringify(e)}`));
+        }
+        showEncodeFilesResult(lines.join('\n'));
+      } else {
+        showEncodeFilesResult(`Upload failed: ${data.message || 'Unknown error'}`, true);
+      }
+    })
+    .catch(err => showEncodeFilesResult(`Upload failed: ${err}`, true))
+    .finally(() => { btn.disabled = false; });
 }
 
 function startEncodeUploadStatusPolling(expectedUploadId) {

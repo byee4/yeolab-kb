@@ -1139,6 +1139,8 @@ _ENCODE_SOFTWARE_CACHE = {}
 ENCODE_SOFTWARE_RESOLVE_DELAY = float(os.getenv("ENCODE_SOFTWARE_RESOLVE_DELAY", "2.5"))
 _encode_software_call_lock = threading.Lock()
 _encode_last_software_call_ts = 0.0
+_encode_software_cache_loaded = False
+_encode_software_cache_path = os.path.join(tempfile.gettempdir(), "yeolab_encode_software_cache.json")
 
 
 def start_encode_update(grants=None, skip_files=False, skip_details=False):
@@ -1177,6 +1179,38 @@ def _encode_api_get(url, params=None, label="request"):
                 time.sleep(wait)
             else:
                 raise
+
+
+def _load_encode_software_cache():
+    global _encode_software_cache_loaded
+    if _encode_software_cache_loaded:
+        return
+    with _encode_software_call_lock:
+        if _encode_software_cache_loaded:
+            return
+        try:
+            if os.path.isfile(_encode_software_cache_path):
+                with open(_encode_software_cache_path, "r") as fh:
+                    data = json.load(fh)
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        if isinstance(k, str) and isinstance(v, str):
+                            _ENCODE_SOFTWARE_CACHE[k] = v
+        except Exception:
+            pass
+        _encode_software_cache_loaded = True
+
+
+def _save_encode_software_cache():
+    try:
+        with _encode_software_call_lock:
+            payload = dict(_ENCODE_SOFTWARE_CACHE)
+            tmp = f"{_encode_software_cache_path}.tmp"
+            with open(tmp, "w") as fh:
+                json.dump(payload, fh, indent=2, sort_keys=True)
+            os.replace(tmp, _encode_software_cache_path)
+    except Exception:
+        pass
 
 
 def _encode_search(search_type, extra_params=None):
@@ -1225,33 +1259,45 @@ def _encode_fetch_experiment_and_files(accession):
     if not acc:
         return {}, []
 
-    detail = _encode_api_get(
-        f"{ENCODE_BASE_URL}/experiments/{acc}/",
-        params={"format": "json", "frame": "embedded"},
-        label=f"experiment {acc}",
-    )
-    files = _encode_search(
-        "File",
-        {
-            "dataset": f"/experiments/{acc}/",
-            "field": [
-                "accession",
-                "file_format",
-                "output_type",
-                "file_size",
-                "href",
-                "assembly",
-                "mapping_assembly",
-                "genome_annotation",
-                "mapped_by",
-                "md5sum",
-                "biological_replicates",
-                "quality_metrics",
-                "analysis_step_version",
-                "step_run",
-            ],
-        },
-    )
+    detail = {}
+    files = []
+    fetch_errors = []
+    try:
+        detail = _encode_api_get(
+            f"{ENCODE_BASE_URL}/experiments/{acc}/",
+            params={"format": "json", "frame": "embedded"},
+            label=f"experiment {acc}",
+        )
+    except Exception as e:
+        fetch_errors.append(f"experiment:{type(e).__name__}: {e}")
+        detail = {}
+
+    try:
+        files = _encode_search(
+            "File",
+            {
+                "dataset": f"/experiments/{acc}/",
+                "field": [
+                    "accession",
+                    "file_format",
+                    "output_type",
+                    "file_size",
+                    "href",
+                    "assembly",
+                    "mapping_assembly",
+                    "genome_annotation",
+                    "mapped_by",
+                    "md5sum",
+                    "biological_replicates",
+                    "quality_metrics",
+                    "analysis_step_version",
+                    "step_run",
+                ],
+            },
+        )
+    except Exception as e:
+        fetch_errors.append(f"file_search:{type(e).__name__}: {e}")
+        files = []
     detail = detail if isinstance(detail, dict) else {}
     files = files if isinstance(files, list) else []
 
@@ -1287,6 +1333,8 @@ def _encode_fetch_experiment_and_files(accession):
                 if merged:
                     files = merged
 
+    if not detail and not files and fetch_errors:
+        raise RuntimeError("; ".join(fetch_errors))
     return detail, files
 
 
@@ -1461,6 +1509,7 @@ def _encode_resolve_software_info(sw_ver, software_cache=None):
     Resolve ENCODE analysis software name/version from embedded dicts or URIs.
     Returns a normalized string like "STAR(2.7.10a)".
     """
+    _load_encode_software_cache()
     cache = software_cache if isinstance(software_cache, dict) else _ENCODE_SOFTWARE_CACHE
 
     if isinstance(sw_ver, dict):
@@ -1511,6 +1560,8 @@ def _encode_resolve_software_info(sw_ver, software_cache=None):
                 name = str(sw_field).strip("/").split("/")[-1] or "unknown_tool"
             resolved = f"{name}({version})"
             cache[sw_uri] = resolved
+            if cache is _ENCODE_SOFTWARE_CACHE:
+                _save_encode_software_cache()
             return resolved
     except Exception:
         pass
@@ -1518,6 +1569,8 @@ def _encode_resolve_software_info(sw_ver, software_cache=None):
     fallback = clean_uri.strip("/").split("/")[-1]
     resolved = f"unknown_tool({fallback})"
     cache[sw_uri] = resolved
+    if cache is _ENCODE_SOFTWARE_CACHE:
+        _save_encode_software_cache()
     return resolved
 
 
@@ -2338,7 +2391,9 @@ def import_encode_experiments_from_search_payload(
                 if live_files:
                     exp_files = live_files
             except Exception as e:
-                _log(f"  Warning: live ENCODE fetch failed for {acc}; using uploaded payload metadata. ({e})")
+                err = f"{type(e).__name__}: {e}"
+                exp["_fetch_error"] = err
+                _log(f"  Warning: live ENCODE fetch failed for {acc}; using uploaded payload metadata. ({err})")
         if exp_files:
             needs_expand = any(
                 not isinstance(f, dict)
@@ -2354,6 +2409,8 @@ def import_encode_experiments_from_search_payload(
         parsed = _parse_encode_experiment(exp_detail, grant_label)
         parsed["_detail"] = exp_detail
         parsed["_files"] = exp_files
+        if exp.get("_fetch_error"):
+            parsed["_fetch_error"] = exp.get("_fetch_error")
         all_experiments[acc] = parsed
 
     total_experiments = len(all_experiments)
@@ -2597,6 +2654,64 @@ def import_encode_experiments_from_search_payload(
         "encode_pipeline_skipped_no_pmid": encode_pipeline_skipped_no_pmid,
         "encode_json_synced": encode_json_synced,
     }
+
+
+def import_encode_experiment_detail_payloads(
+    payloads,
+    grant_label="uploaded_experiment_json",
+    override_existing=False,
+):
+    """
+    Import ENCODE experiment-detail JSON payload(s) directly (e.g. ENCSR*.json).
+    This path does not call ENCODE APIs and relies on embedded experiment/file metadata.
+    Returns aggregate stats plus per-accession errors.
+    """
+    agg = {
+        "experiments_loaded": 0,
+        "publication_links_added": 0,
+        "encode_pipelines": 0,
+        "encode_pipeline_steps": 0,
+        "encode_pipeline_skipped_no_pmid": 0,
+        "encode_json_synced": 0,
+        "errors": [],
+    }
+    for idx, payload in enumerate(payloads or []):
+        if not isinstance(payload, dict):
+            agg["errors"].append({"index": idx, "error": "Payload is not a JSON object"})
+            continue
+        acc = str(payload.get("accession", "")).strip()
+        if not acc:
+            agg["errors"].append({"index": idx, "error": "Missing accession"})
+            continue
+
+        # Normalize file container key for parser compatibility.
+        files = payload.get("files")
+        if not isinstance(files, list):
+            files = payload.get("original_files")
+        if isinstance(files, list):
+            payload = dict(payload)
+            payload["files"] = files
+
+        try:
+            result = import_encode_experiments_from_search_payload(
+                {"@graph": [payload]},
+                grant_label=grant_label,
+                include_backfill=False,
+                fetch_live_details=False,
+                override_existing=bool(override_existing),
+            )
+            for key in (
+                "experiments_loaded",
+                "publication_links_added",
+                "encode_pipelines",
+                "encode_pipeline_steps",
+                "encode_pipeline_skipped_no_pmid",
+                "encode_json_synced",
+            ):
+                agg[key] += int(result.get(key, 0) or 0)
+        except Exception as e:
+            agg["errors"].append({"accession": acc, "error": f"{type(e).__name__}: {e}"})
+    return agg
 
 
 def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_size=50, override_existing=False):

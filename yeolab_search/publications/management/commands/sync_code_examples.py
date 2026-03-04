@@ -43,10 +43,12 @@ class Command(BaseCommand):
         force = options["force"]
 
         from publications.github_sync import list_remote_datasets, fetch_dataset
+        from publications.github_sync import list_remote_json_files, fetch_remote_json_file
         from publications.code_examples import (
             list_datasets_with_paths, get_dataset_content, save_dataset_content,
             delete_dataset, reload_registry,
         )
+        from publications import services
 
         # ── List remote datasets ──────────────────────────────────────
         self.stdout.write("Listing remote datasets on GitHub (recursive)...")
@@ -155,6 +157,47 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.SUCCESS(
                     f"  Sync complete. {fetched} file(s) written, {errors} error(s)."
+                )
+            )
+
+        # ── ENCODEPROJECT_metadata import ────────────────────────────
+        self.stdout.write("Syncing ENCODEPROJECT_metadata JSON files...")
+        try:
+            remote_meta = list_remote_json_files("ENCODEPROJECT_metadata")
+        except Exception as e:
+            self.stderr.write(self.style.WARNING(f"  Skipped ENCODEPROJECT_metadata sync: {e}"))
+            remote_meta = []
+
+        enc_meta_count = 0
+        enc_meta_errors = 0
+        for meta in remote_meta:
+            name = str(meta.get("name", ""))
+            if not name.upper().startswith("ENCSR") or not name.lower().endswith(".json"):
+                continue
+            path = meta.get("path", "")
+            accession = name[:-5]
+            try:
+                content, _sha = fetch_remote_json_file(path)
+                payload = json.loads(content)
+                if not isinstance(payload, dict):
+                    raise ValueError("Payload is not a JSON object")
+                result = services.import_encode_experiment_detail_payloads(
+                    payloads=[payload],
+                    grant_label="github_encodeproject_metadata",
+                    override_existing=force,
+                )
+                if result.get("errors"):
+                    raise RuntimeError(result["errors"][0])
+                enc_meta_count += 1
+                self.stdout.write(f"  ENCODE metadata: {accession}")
+            except Exception as e:
+                enc_meta_errors += 1
+                self.stderr.write(f"  Error importing {accession} from {path}: {e}")
+
+        if remote_meta:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"  ENCODEPROJECT_metadata import complete: {enc_meta_count} imported, {enc_meta_errors} errors."
                 )
             )
 
