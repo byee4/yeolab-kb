@@ -1136,6 +1136,9 @@ ENCODE_HEADERS = {
     "User-Agent": "YeoLabDjango/1.0 (brian.alan.yee@gmail.com)",
 }
 _ENCODE_SOFTWARE_CACHE = {}
+ENCODE_SOFTWARE_RESOLVE_DELAY = float(os.getenv("ENCODE_SOFTWARE_RESOLVE_DELAY", "2.5"))
+_encode_software_call_lock = threading.Lock()
+_encode_last_software_call_ts = 0.0
 
 
 def start_encode_update(grants=None, skip_files=False, skip_details=False):
@@ -1480,8 +1483,16 @@ def _encode_resolve_software_info(sw_ver, software_cache=None):
     if not clean_uri.endswith("/"):
         clean_uri = f"{clean_uri}/"
     try:
-        # Keep software resolution lightweight; don't use heavy retry/backoff path.
-        time.sleep(min(ENCODE_RATE_LIMIT, 0.05))
+        # Throttle software-version lookups to avoid ENCODE lockouts.
+        global _encode_last_software_call_ts
+        with _encode_software_call_lock:
+            now = time.time()
+            elapsed = now - _encode_last_software_call_ts
+            wait = max(0.0, ENCODE_SOFTWARE_RESOLVE_DELAY - elapsed)
+            if wait > 0:
+                time.sleep(wait)
+            _encode_last_software_call_ts = time.time()
+
         resp = _requests.get(
             f"{ENCODE_BASE_URL}{clean_uri}",
             params={"format": "json"},
