@@ -231,3 +231,31 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
         response = views.admin_stop_encode_json_upload(request)
         self.assertEqual(response.status_code, 200)
         stop_mock.assert_called_once_with("abc123_1")
+
+    @patch("publications.services.import_encode_experiment_detail_payloads")
+    def test_admin_upload_encode_experiment_files_imports_payloads(self, import_mock):
+        import_mock.return_value = {
+            "experiments_loaded": 1,
+            "encode_json_synced": 1,
+            "encode_pipelines": 1,
+            "encode_pipeline_steps": 5,
+            "errors": [],
+        }
+        upload = SimpleUploadedFile(
+            "ENCSR251CSO.json",
+            b'{"accession":"ENCSR251CSO","files":[]}',
+            content_type="application/json",
+        )
+
+        request = self.rf.post(
+            "/admin/upload-encode-experiment-files/",
+            {"override_existing": "1", "json_files": upload},
+        )
+        request.user = SimpleNamespace(is_authenticated=True)
+        request._dont_enforce_csrf_checks = True
+
+        response = views.admin_upload_encode_experiment_files(request)
+        self.assertEqual(response.status_code, 200)
+        import_mock.assert_called_once()
+        kwargs = import_mock.call_args.kwargs
+        self.assertTrue(kwargs["override_existing"])

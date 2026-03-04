@@ -1518,6 +1518,65 @@ def admin_upload_encode_json(request):
 @login_required
 @require_POST
 @csrf_protect
+def admin_upload_encode_experiment_files(request):
+    """
+    Upload one or more ENCODE experiment JSON files (ENCSR*.json) and parse directly.
+    """
+    from . import services
+
+    uploads = request.FILES.getlist("json_files")
+    if not uploads:
+        single = request.FILES.get("json_file")
+        if single:
+            uploads = [single]
+    if not uploads:
+        return JsonResponse({"ok": False, "message": "Missing file field 'json_files'."}, status=400)
+
+    override_existing = str(request.POST.get("override_existing", "")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+    payloads = []
+    parse_errors = []
+    for up in uploads:
+        name = str(getattr(up, "name", "") or "")
+        if not name.lower().endswith(".json"):
+            parse_errors.append({"file": name, "error": "Not a .json file"})
+            continue
+        try:
+            payload = json.loads(up.read().decode("utf-8"))
+            payloads.append(payload)
+        except Exception as exc:
+            parse_errors.append({"file": name, "error": f"{type(exc).__name__}: {exc}"})
+
+    if not payloads:
+        return JsonResponse(
+            {"ok": False, "message": "No valid JSON files parsed.", "errors": parse_errors},
+            status=400,
+        )
+
+    result = services.import_encode_experiment_detail_payloads(
+        payloads=payloads,
+        grant_label="uploaded_experiment_json",
+        override_existing=override_existing,
+    )
+    errors = list(result.get("errors", [])) + parse_errors
+    return JsonResponse({
+        "ok": True,
+        "message": f"Processed {len(payloads)} experiment JSON file(s).",
+        "stats": {
+            "experiments_loaded": result.get("experiments_loaded", 0),
+            "encode_json_synced": result.get("encode_json_synced", 0),
+            "encode_pipelines": result.get("encode_pipelines", 0),
+            "encode_pipeline_steps": result.get("encode_pipeline_steps", 0),
+        },
+        "errors": errors,
+    })
+
+
+@login_required
+@require_POST
+@csrf_protect
 def admin_stop_encode_json_upload(request):
     """Request cooperative stop for a running ENCODE JSON upload import."""
     from . import services
