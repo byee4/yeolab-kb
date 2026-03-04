@@ -103,6 +103,8 @@ python manage.py runserver
 
 **Code Examples Editor** (`/admin/code-editor/`): Edit per-dataset JSON files used by the Analysis views. In deployment, the web container clones/pulls `byee4/yeolab-publications-db` on startup and the editor reads/writes files under `/app/yeolab-publications-db/code_examples/{year}/{Mon}/{ACCESSION}.json`. Save operations return the full local file path. Files default to `locked: true` to prevent future Extract Analysis overwrites.
 
+Runtime note: analysis/dataset pages now use dataset-keyed JSON first, and the legacy metadata fallback builder (`generate_pipeline_from_metadata`) is deprecated for runtime rendering and retained only for backfill/admin workflows.
+
 **Add a publication** (`/admin/`): Enter a PubMed ID and click "Preview" to fetch metadata from PubMed. A summary (title, authors, journal, year, grants) is displayed for confirmation before inserting. If the PMID already exists, you're shown a link to the existing record.
 
 **Remove a publication** (`/admin/`): Enter a PubMed ID and click "Preview" to see what would be removed (title, author links, grant links, dataset links). Confirm to delete the publication and all its junction-table links. Shared authors, grants, and datasets are not deleted — only the links to this publication.
@@ -120,6 +122,23 @@ pip install anthropic openai   # if not already installed
 Users provide their own Anthropic or OpenAI API key (stored in browser localStorage only — never sent to or saved on the server). You can select provider and model in the chat UI. Both providers have access to 9 tools: `search_publications`, `get_publication`, `search_authors`, `get_author`, `search_datasets`, `get_dataset`, `get_database_stats`, `search_grants`, and `search_pipelines`. Responses stream in real time via Server-Sent Events.
 
 Example questions: "What are the lab's most recent publications?", "Which datasets use eCLIP?", "Who are Gene Yeo's top collaborators?", "Summarize the lab's work on TDP-43".
+
+## Testing
+
+Run the Django test suite from repo root:
+
+```bash
+/Users/brianyee/miniconda3/bin/python yeolab_search/manage.py test \
+  publications.tests.test_code_examples_registry \
+  publications.tests.test_view_integration \
+  publications.tests.test_encode_processing \
+  publications.tests.test_bulk_updates
+```
+
+Current focused coverage additions include:
+- code_examples registry refresh throttling behavior
+- analysis list cache path (avoids rebuilding code_examples index per request)
+- ENCODE processing extraction and bulk update/stop controls
 
 ## REST API
 
