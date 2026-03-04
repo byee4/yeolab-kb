@@ -18,6 +18,7 @@ import json
 import os
 import threading
 import time
+import warnings
 
 # ---------------------------------------------------------------------------
 # Month abbreviation helper
@@ -635,6 +636,12 @@ def generate_pipeline_from_metadata(accession: str) -> dict | None:
     This function is kept for non-runtime workflows (manual/admin/backfill),
     but dataset/analysis web views should not call it.
     """
+    warnings.warn(
+        "generate_pipeline_from_metadata is deprecated for runtime use; "
+        "prefer dataset-keyed code_examples JSON pipelines.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     try:
         from django.db import connection
     except ImportError:

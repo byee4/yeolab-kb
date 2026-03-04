@@ -178,6 +178,64 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
         cache_get.assert_called_once()
         build_mock.assert_not_called()
 
+    def test_build_code_example_pipelines_queries_only_used_methods(self):
+        registry = {
+            "GSE100": {
+                "steps": [
+                    {"step_order": 1, "tool_name": "STAR"},
+                    {"step_order": 2, "tool_name": "samtools"},
+                    {"step_order": 3, "tool_name": "STAR"},
+                ]
+            }
+        }
+        paths = {"GSE100": "2026/Mar"}
+
+        class FakeCursor:
+            def __init__(self):
+                self.calls = []
+                self._rows = []
+
+            def execute(self, sql, params):
+                normalized = " ".join(sql.split()).lower()
+                self.calls.append((normalized, list(params or [])))
+                if "from dataset_accessions" in normalized:
+                    self._rows = []
+                elif "from computational_methods" in normalized:
+                    self._rows = [
+                        (1, "STAR"),
+                        (2, "samtools"),
+                    ]
+                else:
+                    self._rows = []
+
+            def fetchall(self):
+                return self._rows
+
+        fake_cursor = FakeCursor()
+
+        class FakeCursorContext:
+            def __enter__(self):
+                return fake_cursor
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        fake_connection = SimpleNamespace(cursor=lambda: FakeCursorContext())
+
+        with (
+            patch("publications.views.connection", fake_connection),
+            patch("publications.code_examples.get_registry", return_value=registry),
+            patch("publications.code_examples.get_paths_map", return_value=paths),
+        ):
+            pipelines = views._build_code_example_pipelines()
+
+        self.assertEqual(len(pipelines), 1)
+        method_call = next(
+            call for call in fake_cursor.calls if "from computational_methods" in call[0]
+        )
+        self.assertIn("where lower(canonical_name) in", method_call[0])
+        self.assertEqual(set(method_call[1]), {"star", "samtools"})
+
     def test_healthz_returns_503_when_db_fails(self):
         fake_connection = SimpleNamespace(cursor=MagicMock(side_effect=RuntimeError("db down")))
         with patch("publications.views.connection", fake_connection):
