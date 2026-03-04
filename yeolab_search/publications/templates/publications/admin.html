@@ -100,10 +100,17 @@
         Override existing ENCODE processing steps
       </label>
     </div>
-    <button onclick="uploadEncodeJson()" id="btn-encode-upload"
-            class="md:col-span-1 px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50 justify-self-end">
-      Upload JSON
-    </button>
+    <div class="md:col-span-1 flex gap-2 justify-self-end">
+      <button onclick="stopEncodeJsonImport()" id="btn-encode-stop"
+              class="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition disabled:opacity-50"
+              disabled>
+        Stop Parsing
+      </button>
+      <button onclick="uploadEncodeJson()" id="btn-encode-upload"
+              class="px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50">
+        Upload JSON
+      </button>
+    </div>
   </div>
   <div id="encode-upload-progress-wrap" class="mt-3 hidden">
     <div class="flex items-center gap-2 mb-2 text-[11px]">
@@ -232,6 +239,7 @@
 const csrfToken = '{{ csrf_token }}';
 let pollInterval = null;
 let encodeImportPollInterval = null;
+let encodeCurrentUploadId = '';
 
 function escapeHtml(text) {
   const d = document.createElement('div');
@@ -350,6 +358,7 @@ function uploadEncodeJson() {
   const batchInput = document.getElementById('encode-batch-size');
   const overrideInput = document.getElementById('encode-override-existing');
   const btn = document.getElementById('btn-encode-upload');
+  const stopBtn = document.getElementById('btn-encode-stop');
   const file = fileInput.files && fileInput.files[0];
   if (!file) {
     showEncodeUploadResult('Please choose a JSON file first.', true);
@@ -365,6 +374,7 @@ function uploadEncodeJson() {
   if (overrideInput && overrideInput.checked) form.append('override_existing', '1');
 
   btn.disabled = true;
+  stopBtn.disabled = true;
   showEncodeUploadResult('Uploading and importing ENCODE JSON...');
   setEncodeUploadProgress(0, 'Preparing upload...');
   setEncodeUploadStage('upload', 'active');
@@ -397,6 +407,7 @@ function uploadEncodeJson() {
 
     if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
       const uploadId = data.upload_id || '';
+      encodeCurrentUploadId = uploadId;
       const resumeBatch = data.resume_from_batch || 0;
       const resumeExperiment = data.resume_from_experiment || 0;
       const total = data.total_experiments || 0;
@@ -411,6 +422,7 @@ function uploadEncodeJson() {
       setEncodeUploadProgress(100, 'Failed');
       showEncodeUploadResult(`Upload failed: ${msg}`, true);
       btn.disabled = false;
+      stopBtn.disabled = true;
     }
   };
 
@@ -420,6 +432,7 @@ function uploadEncodeJson() {
     setEncodeUploadProgress(100, 'Failed');
     showEncodeUploadResult('Upload failed: network error', true);
     btn.disabled = false;
+    stopBtn.disabled = true;
   };
 
   xhr.send(form);
@@ -428,7 +441,9 @@ function uploadEncodeJson() {
 function startEncodeUploadStatusPolling(expectedUploadId) {
   if (encodeImportPollInterval) clearInterval(encodeImportPollInterval);
   const btn = document.getElementById('btn-encode-upload');
+  const stopBtn = document.getElementById('btn-encode-stop');
   btn.disabled = true;
+  stopBtn.disabled = false;
 
   const tick = () => {
     const baseUrl = '{% url "publications:admin_update_status" %}';
@@ -483,6 +498,9 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
             setEncodeUploadProgress(100, 'Failed');
             lines.unshift(`ERROR: ${data.error}`);
             showEncodeUploadResult(lines.join('\n'), true);
+          } else if (stats.canceled || stats.cancel_requested) {
+            setEncodeUploadStage('import', 'error');
+            setEncodeUploadProgress(100, 'Stopped');
           } else {
             setEncodeUploadStage('import', 'done');
             setEncodeUploadStage('finalize', 'active');
@@ -490,6 +508,7 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
             setEncodeUploadStage('finalize', 'done');
           }
           btn.disabled = false;
+          stopBtn.disabled = true;
         }
       })
       .catch(() => {});
@@ -497,6 +516,27 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
 
   tick();
   encodeImportPollInterval = setInterval(tick, 1500);
+}
+
+function stopEncodeJsonImport() {
+  const stopBtn = document.getElementById('btn-encode-stop');
+  const uploadId = encodeCurrentUploadId || '';
+  if (!uploadId) {
+    showEncodeUploadResult('No active upload_id to stop.', true);
+    return;
+  }
+  stopBtn.disabled = true;
+  postJSON('{% url "publications:admin_stop_encode_json_upload" %}', 'upload_id=' + encodeURIComponent(uploadId))
+    .then(data => {
+      if (data.ok) {
+        showEncodeUploadResult((document.getElementById('encode-upload-output').textContent || '') + '\n\n' + data.message);
+      } else {
+        showEncodeUploadResult('Stop request failed: ' + (data.message || 'unknown error'), true);
+      }
+    })
+    .catch(err => {
+      showEncodeUploadResult('Stop request failed: ' + err, true);
+    });
 }
 
 {% if status.running %}

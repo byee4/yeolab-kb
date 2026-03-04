@@ -179,3 +179,12 @@ class EncodeProcessingExtractionTests(SimpleTestCase):
         self.assertEqual(started["resume_from_batch"], 0)
         self.assertEqual(started["resume_from_experiment"], 0)
         save_state_mock.assert_called_once()
+
+    def test_request_stop_encode_json_upload_sets_cancel_requested(self):
+        with (
+            patch("publications.services._load_encode_upload_state", return_value={"completed": False}),
+            patch("publications.services._save_encode_upload_state") as save_mock,
+        ):
+            result = services.request_stop_encode_json_upload("abc123_1")
+        self.assertTrue(result["ok"])
+        save_mock.assert_called_once()

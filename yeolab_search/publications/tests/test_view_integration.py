@@ -217,3 +217,17 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
         import_mock.assert_called_once()
         kwargs = import_mock.call_args.kwargs
         self.assertTrue(kwargs["override_existing"])
+
+    @patch("publications.services.request_stop_encode_json_upload")
+    def test_admin_stop_encode_json_upload(self, stop_mock):
+        stop_mock.return_value = {"ok": True, "message": "Stop requested."}
+        request = self.rf.post(
+            "/admin/upload-encode-json/stop/",
+            {"upload_id": "abc123_1"},
+        )
+        request.user = SimpleNamespace(is_authenticated=True)
+        request._dont_enforce_csrf_checks = True
+
+        response = views.admin_stop_encode_json_upload(request)
+        self.assertEqual(response.status_code, 200)
+        stop_mock.assert_called_once_with("abc123_1")

@@ -1518,6 +1518,20 @@ def admin_upload_encode_json(request):
 @login_required
 @require_POST
 @csrf_protect
+def admin_stop_encode_json_upload(request):
+    """Request cooperative stop for a running ENCODE JSON upload import."""
+    from . import services
+
+    upload_id = (request.POST.get("upload_id", "") or "").strip()
+    result = services.request_stop_encode_json_upload(upload_id)
+    if result.get("ok"):
+        return JsonResponse(result)
+    return JsonResponse(result, status=400)
+
+
+@login_required
+@require_POST
+@csrf_protect
 def admin_preview_add(request):
     """Preview what will be added for a PMID (fetches from PubMed without inserting)."""
     from . import services

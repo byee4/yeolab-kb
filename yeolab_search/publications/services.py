@@ -164,10 +164,21 @@ def get_update_status(upload_id=None):
                 "completed_experiments": int(persisted.get("next_index", 0) or 0),
                 "current_accession": str(persisted.get("current_accession", "") or ""),
                 "imported_accessions_recent": list(persisted.get("imported_accessions_recent", []) or []),
+                "cancel_requested": bool(persisted.get("cancel_requested", False)),
+                "canceled": bool(persisted.get("canceled", False)),
             })
             status["stats"] = persisted_stats
-            status["running"] = not bool(persisted.get("completed", False))
-            if status["running"]:
+            status["running"] = (
+                not bool(persisted.get("completed", False))
+                and not bool(persisted.get("canceled", False))
+                and not bool(persisted.get("cancel_requested", False))
+            )
+            if persisted_stats["canceled"] or persisted_stats["cancel_requested"]:
+                status["progress"] = (
+                    f"ENCODE upload {upload_id} stopped at "
+                    f"{persisted_stats['completed_experiments']}/{persisted_stats['total_experiments']} datasets."
+                )
+            elif status["running"]:
                 status["progress"] = (
                     f"Importing ENCODE upload {upload_id} "
                     f"({persisted_stats['completed_experiments']}/{persisted_stats['total_experiments']})"
@@ -246,6 +257,28 @@ def _load_encode_upload_state(upload_id):
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def request_stop_encode_json_upload(upload_id):
+    """
+    Mark a running ENCODE JSON upload import as cancel-requested.
+    Worker checks this flag between datasets and exits safely.
+    """
+    upload_id = str(upload_id or "").strip()
+    if not upload_id:
+        return {"ok": False, "message": "Missing upload_id."}
+
+    state = _load_encode_upload_state(upload_id)
+    if not state:
+        return {"ok": False, "message": f"Unknown upload_id: {upload_id}"}
+    if bool(state.get("completed", False)):
+        return {"ok": False, "message": "Import already completed."}
+
+    state["cancel_requested"] = True
+    state["updated_at"] = datetime.now().isoformat()
+    _save_encode_upload_state(upload_id, state)
+    _set_status(progress=f"Cancel requested for ENCODE upload {upload_id}")
+    return {"ok": True, "message": f"Stop requested for {upload_id}."}
 
 
 def _set_status(**kwargs):
@@ -2545,10 +2578,18 @@ def start_encode_json_upload_import(payload, grant_label="uploaded_json", batch_
             "current_accession": "",
             "imported_accessions": [],
             "imported_accessions_recent": [],
+            "cancel_requested": False,
+            "canceled": False,
             "agg": {},
             "completed": False,
             "updated_at": datetime.now().isoformat(),
         })
+    else:
+        # Fresh run should clear any prior cancel marker.
+        state["cancel_requested"] = False
+        state["canceled"] = False
+        state["updated_at"] = datetime.now().isoformat()
+        _save_encode_upload_state(upload_id, state)
 
     started = _start_background_worker(
         target=_run_encode_json_upload_import,
@@ -2602,6 +2643,9 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size, override_
                     agg[key] = int(state.get("agg", {}).get(key, 0))
                 except Exception:
                     pass
+        state["cancel_requested"] = False
+        state["canceled"] = False
+        _save_encode_upload_state(upload_id, state)
 
         _set_status(stats={
             **agg,
@@ -2615,7 +2659,14 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size, override_
         })
 
         current_batch = None
+        canceled = False
         for exp_idx in range(next_index, total_experiments):
+            latest_state = _load_encode_upload_state(upload_id)
+            if bool(latest_state.get("cancel_requested", False)):
+                canceled = True
+                _log(f"Stop requested for {upload_id}; ending import at dataset {exp_idx}/{total_experiments}.")
+                break
+
             exp = graph[exp_idx] if exp_idx < len(graph) else {}
             if not isinstance(exp, dict):
                 next_index = exp_idx + 1
@@ -2653,6 +2704,8 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size, override_
                 "current_accession": acc,
                 "imported_accessions": imported_accessions[-5000:],
                 "imported_accessions_recent": imported_accessions[-30:],
+                "cancel_requested": False,
+                "canceled": False,
                 "agg": agg,
                 "completed": False,
                 "updated_at": datetime.now().isoformat(),
@@ -2667,33 +2720,59 @@ def _run_encode_json_upload_import(upload_id, grant_label, batch_size, override_
                 "completed_experiments": next_index,
                 "current_accession": acc,
                 "imported_accessions_recent": imported_accessions[-12:],
+                "cancel_requested": False,
+                "canceled": False,
             })
 
-        state_payload = {
-            "upload_id": upload_id,
-            "next_index": total_experiments,
-            "next_batch": total_batches,
-            "total_batches": total_batches,
-            "total_experiments": total_experiments,
-            "current_accession": "",
-            "imported_accessions": imported_accessions[-5000:],
-            "imported_accessions_recent": imported_accessions[-30:],
-            "agg": agg,
-            "completed": True,
-            "updated_at": datetime.now().isoformat(),
-        }
+        if canceled:
+            state_payload = {
+                "upload_id": upload_id,
+                "next_index": next_index,
+                "next_batch": next_index // batch_size,
+                "total_batches": total_batches,
+                "total_experiments": total_experiments,
+                "current_accession": "",
+                "imported_accessions": imported_accessions[-5000:],
+                "imported_accessions_recent": imported_accessions[-30:],
+                "cancel_requested": False,
+                "canceled": True,
+                "agg": agg,
+                "completed": False,
+                "updated_at": datetime.now().isoformat(),
+            }
+        else:
+            state_payload = {
+                "upload_id": upload_id,
+                "next_index": total_experiments,
+                "next_batch": total_batches,
+                "total_batches": total_batches,
+                "total_experiments": total_experiments,
+                "current_accession": "",
+                "imported_accessions": imported_accessions[-5000:],
+                "imported_accessions_recent": imported_accessions[-30:],
+                "cancel_requested": False,
+                "canceled": False,
+                "agg": agg,
+                "completed": True,
+                "updated_at": datetime.now().isoformat(),
+            }
         _save_encode_upload_state(upload_id, state_payload)
         _set_status(stats={
             **agg,
             "upload_id": upload_id,
             "total_experiments": total_experiments,
             "total_batches": total_batches,
-            "completed_batches": total_batches,
-            "completed_experiments": total_experiments,
+            "completed_batches": state_payload.get("next_batch", 0),
+            "completed_experiments": state_payload.get("next_index", 0),
             "current_accession": "",
             "imported_accessions_recent": imported_accessions[-12:],
+            "cancel_requested": False,
+            "canceled": bool(state_payload.get("canceled", False)),
         })
-        _log(f"ENCODE JSON import complete for {upload_id}: {total_experiments} experiments processed.")
+        if canceled:
+            _log(f"ENCODE JSON import stopped for {upload_id} at {next_index}/{total_experiments} experiments.")
+        else:
+            _log(f"ENCODE JSON import complete for {upload_id}: {total_experiments} experiments processed.")
     except Exception as e:
         _log(f"ERROR (encode json import): {e}")
         _set_status(error=str(e))

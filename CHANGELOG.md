@@ -22,3 +22,4 @@
 - Ensured refined one-line-per-file ENCODE metadata steps are always retained in processing output (not filtered out by keyword matching).
 - Fixed ENCODE file parsing fallback to expand `files` URI references (`@id`) into full file metadata when search rows are missing/incomplete.
 - Updated ENCODE flattened processing lines to emit script-style rows (`FILE | TYPE | ASM | REP | STEP | SOFTWARE | QC`) and ignore unresolved placeholder file entries.
+- Added admin `Stop Parsing` control for ENCODE JSON imports with cooperative cancellation by `upload_id`, preserving resumable checkpoint state.
