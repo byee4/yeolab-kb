@@ -100,16 +100,24 @@
         Override existing ENCODE processing steps
       </label>
     </div>
-    <button onclick="uploadEncodeJson()" id="btn-encode-upload"
-            class="md:col-span-1 px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50 justify-self-end">
-      Upload JSON
-    </button>
+    <div class="md:col-span-1 flex gap-2 justify-self-end">
+      <button onclick="stopEncodeJsonImport()" id="btn-encode-stop"
+              class="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition disabled:opacity-50"
+              disabled>
+        Stop Parsing
+      </button>
+      <button onclick="uploadEncodeJson()" id="btn-encode-upload"
+              class="px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition disabled:opacity-50">
+        Upload JSON
+      </button>
+    </div>
   </div>
   <div id="encode-upload-progress-wrap" class="mt-3 hidden">
     <div class="flex items-center gap-2 mb-2 text-[11px]">
       <span id="encode-stage-upload" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">1. Upload</span>
       <span id="encode-stage-import" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">2. Import</span>
       <span id="encode-stage-finalize" class="px-2 py-0.5 rounded bg-gray-100 text-gray-500">3. Finalize</span>
+      <span id="encode-resume-indicator" class="ml-auto px-2 py-0.5 rounded bg-gray-100 text-gray-600">Resume: 0/0</span>
     </div>
     <div class="w-full bg-gray-100 border rounded h-2 overflow-hidden">
       <div id="encode-upload-progress-bar" class="h-2 bg-purple-600 transition-all duration-200" style="width: 0%;"></div>
@@ -232,6 +240,7 @@
 const csrfToken = '{{ csrf_token }}';
 let pollInterval = null;
 let encodeImportPollInterval = null;
+let encodeCurrentUploadId = '';
 
 function escapeHtml(text) {
   const d = document.createElement('div');
@@ -267,6 +276,21 @@ function setEncodeUploadProgress(percent, label) {
   const p = Math.max(0, Math.min(100, Math.round(percent)));
   bar.style.width = p + '%';
   text.textContent = label || `${p}%`;
+}
+
+function setEncodeResumeIndicator(done, total, state='running') {
+  const el = document.getElementById('encode-resume-indicator');
+  if (!el) return;
+  const d = Number(done || 0);
+  const t = Number(total || 0);
+  el.textContent = `Resume: ${d}/${t}`;
+  if (state === 'stopped') {
+    el.className = 'ml-auto px-2 py-0.5 rounded bg-yellow-100 text-yellow-800';
+  } else if (state === 'done') {
+    el.className = 'ml-auto px-2 py-0.5 rounded bg-green-100 text-green-700';
+  } else {
+    el.className = 'ml-auto px-2 py-0.5 rounded bg-gray-100 text-gray-600';
+  }
 }
 
 function setEncodeUploadStage(stage, status='active') {
@@ -350,6 +374,7 @@ function uploadEncodeJson() {
   const batchInput = document.getElementById('encode-batch-size');
   const overrideInput = document.getElementById('encode-override-existing');
   const btn = document.getElementById('btn-encode-upload');
+  const stopBtn = document.getElementById('btn-encode-stop');
   const file = fileInput.files && fileInput.files[0];
   if (!file) {
     showEncodeUploadResult('Please choose a JSON file first.', true);
@@ -365,6 +390,7 @@ function uploadEncodeJson() {
   if (overrideInput && overrideInput.checked) form.append('override_existing', '1');
 
   btn.disabled = true;
+  stopBtn.disabled = true;
   showEncodeUploadResult('Uploading and importing ENCODE JSON...');
   setEncodeUploadProgress(0, 'Preparing upload...');
   setEncodeUploadStage('upload', 'active');
@@ -397,9 +423,11 @@ function uploadEncodeJson() {
 
     if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
       const uploadId = data.upload_id || '';
+      encodeCurrentUploadId = uploadId;
       const resumeBatch = data.resume_from_batch || 0;
       const resumeExperiment = data.resume_from_experiment || 0;
       const total = data.total_experiments || 0;
+      setEncodeResumeIndicator(resumeExperiment, total, 'running');
       showEncodeUploadResult(
         `${data.message || 'Import started.'}\nupload_id: ${uploadId}\nresume_from_batch: ${resumeBatch}\nresume_from_experiment: ${resumeExperiment}\ntotal_experiments: ${total}\n\nWaiting for import progress...`
       );
@@ -411,6 +439,7 @@ function uploadEncodeJson() {
       setEncodeUploadProgress(100, 'Failed');
       showEncodeUploadResult(`Upload failed: ${msg}`, true);
       btn.disabled = false;
+      stopBtn.disabled = true;
     }
   };
 
@@ -420,6 +449,7 @@ function uploadEncodeJson() {
     setEncodeUploadProgress(100, 'Failed');
     showEncodeUploadResult('Upload failed: network error', true);
     btn.disabled = false;
+    stopBtn.disabled = true;
   };
 
   xhr.send(form);
@@ -428,7 +458,9 @@ function uploadEncodeJson() {
 function startEncodeUploadStatusPolling(expectedUploadId) {
   if (encodeImportPollInterval) clearInterval(encodeImportPollInterval);
   const btn = document.getElementById('btn-encode-upload');
+  const stopBtn = document.getElementById('btn-encode-stop');
   btn.disabled = true;
+  stopBtn.disabled = false;
 
   const tick = () => {
     const baseUrl = '{% url "publications:admin_update_status" %}';
@@ -453,6 +485,8 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
           pct = basePct + Math.min(49, Math.round((completedBatches / totalBatches) * 49));
         }
         setEncodeUploadStage('import', 'active');
+        const runState = (stats.canceled || stats.cancel_requested) ? 'stopped' : (data.running ? 'running' : 'done');
+        setEncodeResumeIndicator(completedExperiments, totalExperiments, runState);
         setEncodeUploadProgress(
           pct,
           `Parsing dataset ${completedExperiments}/${totalExperiments || '?'} (${statusUploadId || 'pending id'})`
@@ -483,6 +517,9 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
             setEncodeUploadProgress(100, 'Failed');
             lines.unshift(`ERROR: ${data.error}`);
             showEncodeUploadResult(lines.join('\n'), true);
+          } else if (stats.canceled || stats.cancel_requested) {
+            setEncodeUploadStage('import', 'error');
+            setEncodeUploadProgress(100, 'Stopped');
           } else {
             setEncodeUploadStage('import', 'done');
             setEncodeUploadStage('finalize', 'active');
@@ -490,6 +527,7 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
             setEncodeUploadStage('finalize', 'done');
           }
           btn.disabled = false;
+          stopBtn.disabled = true;
         }
       })
       .catch(() => {});
@@ -497,6 +535,27 @@ function startEncodeUploadStatusPolling(expectedUploadId) {
 
   tick();
   encodeImportPollInterval = setInterval(tick, 1500);
+}
+
+function stopEncodeJsonImport() {
+  const stopBtn = document.getElementById('btn-encode-stop');
+  const uploadId = encodeCurrentUploadId || '';
+  if (!uploadId) {
+    showEncodeUploadResult('No active upload_id to stop.', true);
+    return;
+  }
+  stopBtn.disabled = true;
+  postJSON('{% url "publications:admin_stop_encode_json_upload" %}', 'upload_id=' + encodeURIComponent(uploadId))
+    .then(data => {
+      if (data.ok) {
+        showEncodeUploadResult((document.getElementById('encode-upload-output').textContent || '') + '\n\n' + data.message);
+      } else {
+        showEncodeUploadResult('Stop request failed: ' + (data.message || 'unknown error'), true);
+      }
+    })
+    .catch(err => {
+      showEncodeUploadResult('Stop request failed: ' + err, true);
+    });
 }
 
 {% if status.running %}

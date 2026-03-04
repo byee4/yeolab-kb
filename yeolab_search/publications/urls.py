@@ -25,6 +25,7 @@ urlpatterns = [
     path("admin/start-update/", views.admin_start_update, name="admin_start_update"),
     path("admin/update-status/", views.admin_update_status, name="admin_update_status"),
     path("admin/upload-encode-json/", views.admin_upload_encode_json, name="admin_upload_encode_json"),
+    path("admin/upload-encode-json/stop/", views.admin_stop_encode_json_upload, name="admin_stop_encode_json_upload"),
     path("admin/preview-add/", views.admin_preview_add, name="admin_preview_add"),
     path("admin/confirm-add/", views.admin_confirm_add, name="admin_confirm_add"),
     path("admin/preview-remove/", views.admin_preview_remove, name="admin_preview_remove"),
