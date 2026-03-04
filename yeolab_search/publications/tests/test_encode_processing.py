@@ -28,7 +28,7 @@ class EncodeProcessingExtractionTests(SimpleTestCase):
         self.assertIn("ENCFF000AAA.bam", lines[0])
         self.assertIn("align-star", lines[0])
         self.assertIn("STAR(2.7.10a)", lines[0])
-        self.assertIn("assembly=hg38", lines[0])
+        self.assertIn(" | hg38 | ", lines[0])
 
     def test_encode_fetch_experiment_and_files_queries_live_endpoints(self):
         with (
@@ -46,6 +46,25 @@ class EncodeProcessingExtractionTests(SimpleTestCase):
         detail, files = services._encode_fetch_experiment_and_files("")
         self.assertEqual(detail, {})
         self.assertEqual(files, [])
+
+    def test_encode_fetch_experiment_and_files_expands_detail_file_refs_when_search_empty(self):
+        detail_payload = {
+            "accession": "ENCSR875UMY",
+            "files": [{"@id": "/files/ENCFF424AFE/"}],
+        }
+        file_payload = {"accession": "ENCFF424AFE", "file_format": "bam", "output_type": "alignments"}
+        with patch("publications.services._encode_api_get", side_effect=[detail_payload, file_payload]), patch(
+            "publications.services._encode_search", return_value=[]
+        ):
+            _, files = services._encode_fetch_experiment_and_files("ENCSR875UMY")
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].get("accession"), "ENCFF424AFE")
+        self.assertEqual(files[0].get("file_format"), "bam")
+
+    def test_encode_flatten_processing_lines_skips_unresolved_placeholder_rows(self):
+        files = [{"@id": "/files/ENCFF000XXX/"}]
+        lines = services._encode_flatten_processing_lines({}, detail={}, files=files)
+        self.assertEqual(lines, [])
 
     def test_extract_encode_processing_steps_uses_detail_and_files(self):
         exp = {

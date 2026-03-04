@@ -20,3 +20,5 @@
 - Added an ENCODE upload `override_existing` option to force replacement of previously stored ENCODE processing steps/pipelines during grant JSON import.
 - Fixed ENCODE upload override behavior so batch imports restart from experiment 0 (instead of resuming checkpoints) when `override_existing` is enabled.
 - Ensured refined one-line-per-file ENCODE metadata steps are always retained in processing output (not filtered out by keyword matching).
+- Fixed ENCODE file parsing fallback to expand `files` URI references (`@id`) into full file metadata when search rows are missing/incomplete.
+- Updated ENCODE flattened processing lines to emit script-style rows (`FILE | TYPE | ASM | REP | STEP | SOFTWARE | QC`) and ignore unresolved placeholder file entries.

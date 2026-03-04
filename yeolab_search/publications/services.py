@@ -1190,7 +1190,7 @@ def _encode_fetch_experiment_and_files(accession):
 
     detail = _encode_api_get(
         f"{ENCODE_BASE_URL}/experiments/{acc}/",
-        params={"format": "json"},
+        params={"format": "json", "frame": "embedded"},
         label=f"experiment {acc}",
     )
     files = _encode_search(
@@ -1215,7 +1215,115 @@ def _encode_fetch_experiment_and_files(accession):
             ],
         },
     )
-    return (detail if isinstance(detail, dict) else {}), (files if isinstance(files, list) else [])
+    detail = detail if isinstance(detail, dict) else {}
+    files = files if isinstance(files, list) else []
+
+    # Fallback: if file search returned nothing, expand from embedded file refs.
+    if not files:
+        files = _encode_expand_file_records(detail.get("files", []))
+
+    # If search yielded incomplete rows, merge/replace with expanded detail files.
+    if files:
+        incomplete = 0
+        for f in files:
+            if not isinstance(f, dict):
+                incomplete += 1
+                continue
+            if not str(f.get("accession", "")).strip() or not str(f.get("file_format", "")).strip():
+                incomplete += 1
+        if incomplete:
+            expanded = _encode_expand_file_records(detail.get("files", []))
+            if expanded:
+                by_acc = {}
+                for f in files:
+                    if isinstance(f, dict):
+                        k = str(f.get("accession", "")).strip()
+                        if k:
+                            by_acc[k] = f
+                for ef in expanded:
+                    if not isinstance(ef, dict):
+                        continue
+                    k = str(ef.get("accession", "")).strip()
+                    if k:
+                        by_acc[k] = ef
+                merged = list(by_acc.values())
+                if merged:
+                    files = merged
+
+    return detail, files
+
+
+def _encode_expand_file_records(file_refs):
+    """
+    Expand ENCODE experiment `files` references into usable file metadata dicts.
+    Accepts embedded dicts, @id/href dicts, or URI strings.
+    """
+    out = []
+    seen = set()
+    wanted = (
+        "accession",
+        "file_format",
+        "output_type",
+        "assembly",
+        "mapping_assembly",
+        "biological_replicates",
+        "quality_metrics",
+        "analysis_step_version",
+        "step_run",
+        "genome_annotation",
+        "mapped_by",
+        "href",
+        "md5sum",
+        "file_size",
+    )
+    for ref in file_refs or []:
+        rec = None
+        uri = ""
+        if isinstance(ref, dict):
+            # already expanded enough
+            if str(ref.get("accession", "")).strip() and str(ref.get("file_format", "")).strip():
+                rec = dict(ref)
+            else:
+                uri = str(ref.get("@id") or ref.get("href") or "").strip()
+        elif isinstance(ref, str):
+            uri = ref.strip()
+
+        if rec is None and uri:
+            if not uri.startswith("/"):
+                uri = f"/{uri}"
+            if not uri.endswith("/"):
+                uri = f"{uri}/"
+            try:
+                rec = _encode_api_get(
+                    f"{ENCODE_BASE_URL}{uri}",
+                    params={"format": "json", "frame": "embedded"},
+                    label=f"file {uri}",
+                )
+            except Exception:
+                rec = None
+
+        if not isinstance(rec, dict):
+            continue
+        acc = str(rec.get("accession", "")).strip()
+        if not acc or acc in seen:
+            continue
+        seen.add(acc)
+
+        normalized = {k: rec.get(k) for k in wanted if k in rec}
+        if "mapping_assembly" not in normalized:
+            normalized["mapping_assembly"] = rec.get("mapping_assembly", "")
+        if "assembly" not in normalized:
+            normalized["assembly"] = rec.get("assembly", "")
+        if "biological_replicates" not in normalized:
+            normalized["biological_replicates"] = rec.get("biological_replicates", [])
+        if "quality_metrics" not in normalized:
+            normalized["quality_metrics"] = rec.get("quality_metrics", [])
+        if "analysis_step_version" not in normalized:
+            normalized["analysis_step_version"] = rec.get("analysis_step_version", {})
+        if "step_run" not in normalized:
+            normalized["step_run"] = rec.get("step_run", {})
+        out.append(normalized)
+    return out
 
 
 def _encode_upload_state_dir():
@@ -1374,6 +1482,9 @@ def _encode_flatten_processing_lines(exp, detail=None, files=None):
             continue
         file_acc = str(f.get("accession", "")).strip()
         file_format = str(f.get("file_format", "")).strip() or "file"
+        if not file_acc and file_format == "file":
+            # Ignore unresolved/placeholder rows; they create noisy "File .file" lines.
+            continue
         out_type = str(f.get("output_type", "")).strip() or "N/A"
         assembly = str(f.get("mapping_assembly") or f.get("assembly") or "N/A").strip() or "N/A"
         reps = f.get("biological_replicates", []) if isinstance(f.get("biological_replicates", []), list) else []
@@ -1412,11 +1523,11 @@ def _encode_flatten_processing_lines(exp, detail=None, files=None):
                 if isinstance(qtypes, list) and qtypes:
                     qc_summaries.append(str(qtypes[0]).replace("QualityMetric", ""))
 
+        filename = f"{file_acc}.{file_format}" if file_acc else f"unknown.{file_format}"
         step_desc = (
-            f"File {file_acc}.{file_format}: output={out_type}; assembly={assembly}; "
-            f"replicates={rep_str}; step={step_name}; "
-            f"software={','.join(software_used) if software_used else 'N/A'}; "
-            f"qc={','.join(qc_summaries) if qc_summaries else 'N/A'}."
+            f"{filename} | {out_type} | {assembly} | {rep_str} | {step_name} | "
+            f"{','.join(software_used) if software_used else 'N/A'} | "
+            f"{','.join(qc_summaries) if qc_summaries else 'N/A'}"
         )
         out_lines.append(step_desc)
     return out_lines
@@ -2165,6 +2276,17 @@ def import_encode_experiments_from_search_payload(
                     exp_files = live_files
             except Exception as e:
                 _log(f"  Warning: live ENCODE fetch failed for {acc}; using uploaded payload metadata. ({e})")
+        if exp_files:
+            needs_expand = any(
+                not isinstance(f, dict)
+                or (not str(f.get("accession", "")).strip())
+                or (not str(f.get("file_format", "")).strip())
+                for f in exp_files
+            )
+            if needs_expand:
+                expanded_files = _encode_expand_file_records(exp_files)
+                if expanded_files:
+                    exp_files = expanded_files
 
         parsed = _parse_encode_experiment(exp_detail, grant_label)
         parsed["_detail"] = exp_detail
