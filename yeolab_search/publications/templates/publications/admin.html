@@ -249,7 +249,7 @@
       <tr class="border-t border-gray-100">
         <td class="py-2 font-mono text-gray-600">{{ u.time }}</td>
         <td class="py-2">{{ u.new_pmids|default:"0" }}</td>
-        <td class="py-2 text-gray-500">{{ u.notes|default:"—" }}</td>
+        <td class="py-2 text-gray-500">{{ u.notes|default:"—"|urlize }}</td>
       </tr>
       {% endfor %}
     </tbody>

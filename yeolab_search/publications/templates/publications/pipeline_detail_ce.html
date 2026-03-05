@@ -48,7 +48,16 @@
 
 <!-- Pipeline Steps -->
 <div class="bg-white rounded-lg shadow-sm border p-4 mb-4">
-  <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Processing Steps</h2>
+  <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded p-3 text-xs mb-3">
+    <strong>Warning:</strong> Pipeline descriptions and code snippets may be inferred or AI-generated. Use them only as a starting point to guide analysis, and validate before use.
+  </div>
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Processing Steps</h2>
+    <a href="{% url 'publications:analysis_notebook_by_accession' accession %}"
+       class="text-xs bg-ucsd-sky text-white px-2.5 py-1 rounded hover:bg-ucsd-blue transition">
+      Generate Jupyter Notebook
+    </a>
+  </div>
   <ol class="space-y-4">
     {% for step in steps %}
     <li class="flex gap-3">
