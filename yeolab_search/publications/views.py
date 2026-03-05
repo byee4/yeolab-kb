@@ -1,5 +1,6 @@
 import json
 import re
+import os
 from collections import defaultdict
 from django.shortcuts import render, get_object_or_404
 from django.db.models import Q, Count, Sum
@@ -1783,6 +1784,18 @@ def admin_code_editor_save(request):
         if month:
             kwargs["month"] = month
         path = save_dataset_content(accession, content, **kwargs)
+        cache.delete(CODE_EXAMPLE_PIPELINES_CACHE_KEY)
+
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO update_log (new_pmids_added, notes)
+                       VALUES (%s, %s)""",
+                    [0, f"Code examples JSON edited: {accession} ({path})"],
+                )
+        except Exception:
+            pass
+
         return JsonResponse({"ok": True, "accession": accession, "path": path})
     except ValueError as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
@@ -1813,6 +1826,18 @@ def admin_code_editor_push(request):
         from publications.code_examples import get_dataset_rel_path
         rel_path = get_dataset_rel_path(accession)
         result = push_dataset(accession, content, rel_path=rel_path)
+        cache.delete(CODE_EXAMPLE_PIPELINES_CACHE_KEY)
+
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO update_log (new_pmids_added, notes)
+                       VALUES (%s, %s)""",
+                    [0, f"Code examples save+push: {accession} {result.get('html_url', '')}".strip()],
+                )
+        except Exception:
+            pass
+
         return JsonResponse({
             "ok": True,
             "accession": accession,
@@ -1841,6 +1866,7 @@ def admin_code_editor_delete(request):
     deleted = delete_dataset(accession)
     if not deleted:
         return JsonResponse({"ok": False, "error": f"Dataset {accession} not found locally"}, status=404)
+    cache.delete(CODE_EXAMPLE_PIPELINES_CACHE_KEY)
 
     # Optionally delete from GitHub too
     delete_remote = request.POST.get("delete_remote") == "1"
@@ -1890,9 +1916,34 @@ def admin_sync_code_examples(request):
         if force:
             kwargs["force"] = True
         call_command("sync_code_examples", **kwargs)
+        cache.delete(CODE_EXAMPLE_PIPELINES_CACHE_KEY)
 
         output = out.getvalue()
         errors = err.getvalue()
+
+        repo = os.environ.get("GITHUB_REPO", "byee4/yeolab-publications-db")
+        branch = os.environ.get("GITHUB_BRANCH", "main")
+        repo_url = f"https://github.com/{repo}/tree/{branch}/code_examples"
+        note = f"GitHub code_examples sync (backfill={int(backfill)}, force={int(force)}): {repo_url}"
+        if output:
+            m_written = re.search(r"Sync complete\.\s+(\d+)\s+file\(s\)\s+written", output)
+            m_remote = re.search(r"Remote:\s+(\d+)\s+dataset\(s\)", output)
+            details = []
+            if m_written:
+                details.append(f"written={m_written.group(1)}")
+            if m_remote:
+                details.append(f"remote={m_remote.group(1)}")
+            if details:
+                note += " (" + ", ".join(details) + ")"
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO update_log (new_pmids_added, notes)
+                       VALUES (%s, %s)""",
+                    [0, note],
+                )
+        except Exception:
+            pass
 
         return JsonResponse({
             "ok": True,
@@ -2348,6 +2399,72 @@ def analysis_list(request):
     })
 
 
+NOTEBOOK_WARNING_TEXT = (
+    "Warning: The following pipeline content and code snippets may be inferred or AI-generated. "
+    "Use them only as a starting point to guide analysis, and validate all steps and commands before use."
+)
+
+
+def _build_notebook_response(*, title: str, source_label: str, steps, filename_stem: str):
+    cells = [{
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            f"# {title}\n\n",
+            f"**Source:** {source_label}\n\n",
+            f"**{NOTEBOOK_WARNING_TEXT}**\n",
+        ],
+    }]
+
+    for step in steps:
+        step_order = step.get("step_order", "")
+        description = step.get("description", "") or "No description provided."
+        code_example = (step.get("code_example", "") or "").rstrip("\n")
+        github_url = (step.get("github_url", "") or "").strip()
+        if not code_example:
+            code_example = "# No code example provided for this step."
+
+        source = [
+            f"## Step {step_order}\n\n",
+            f"{description}\n\n",
+            "```bash\n",
+            f"{code_example}\n",
+            "```\n",
+        ]
+        if github_url:
+            source.append(f"\nReference: {github_url}\n")
+
+        cells.append({
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": source,
+        })
+
+    notebook = {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
+            },
+            "language_info": {
+                "name": "python",
+            },
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+
+    response = HttpResponse(
+        json.dumps(notebook, indent=2),
+        content_type="application/x-ipynb+json",
+    )
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", filename_stem).strip("_") or "analysis_steps"
+    response["Content-Disposition"] = f'attachment; filename="{safe_stem}.ipynb"'
+    return response
+
+
 def analysis_detail(request, pipeline_id):
     """Detail page for a single analysis pipeline with ordered steps."""
     # Try DB first
@@ -2497,3 +2614,62 @@ def analysis_detail_by_accession(request, accession):
         "tools_used": tools_used,
         "accession": accession,
     })
+
+
+def analysis_notebook(request, pipeline_id):
+    """Download a Jupyter notebook version of a DB-backed analysis pipeline."""
+    try:
+        pipeline = (
+            AnalysisPipeline.objects.select_related("accession")
+            .get(pipeline_id=pipeline_id)
+        )
+    except (AnalysisPipeline.DoesNotExist, ValueError):
+        return HttpResponse("Pipeline not found", status=404)
+
+    # If curated dataset JSON exists, use the curated notebook endpoint.
+    if pipeline.accession:
+        from .code_examples import get_steps_for_dataset
+        accession = pipeline.accession.accession
+        if get_steps_for_dataset(accession) is not None:
+            return analysis_notebook_by_accession(request, accession=accession)
+
+    step_rows = (
+        PipelineStep.objects.filter(pipeline=pipeline)
+        .order_by("step_order")
+    )
+    steps = [{
+        "step_order": s.step_order,
+        "description": s.description or "",
+        "code_example": s.code_example or "",
+        "github_url": s.github_url or "",
+    } for s in step_rows]
+
+    return _build_notebook_response(
+        title=pipeline.pipeline_title or f"Pipeline {pipeline_id}",
+        source_label=pipeline.source or "analysis_pipelines",
+        steps=steps,
+        filename_stem=f"pipeline_{pipeline_id}_analysis_steps",
+    )
+
+
+def analysis_notebook_by_accession(request, accession):
+    """Download a Jupyter notebook version of a dataset-backed analysis pipeline."""
+    from .code_examples import get_steps_for_dataset
+
+    steps = get_steps_for_dataset(accession)
+    if steps is None:
+        return HttpResponse("Pipeline not found", status=404)
+
+    normalized_steps = [{
+        "step_order": s.get("step_order", 0),
+        "description": s.get("description", ""),
+        "code_example": s.get("code_example", ""),
+        "github_url": s.get("github_url", ""),
+    } for s in steps]
+
+    return _build_notebook_response(
+        title=f"{accession} Processing Pipeline",
+        source_label="code_examples",
+        steps=normalized_steps,
+        filename_stem=f"{accession}_analysis_steps",
+    )

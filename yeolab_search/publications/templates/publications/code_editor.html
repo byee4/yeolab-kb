@@ -70,10 +70,6 @@
                 class="px-3 py-1.5 bg-gray-600 text-white text-xs rounded hover:bg-gray-700 transition disabled:opacity-50" disabled>
           Fetch from GitHub
         </button>
-        <button onclick="saveLocally()" id="btn-save"
-                class="px-3 py-1.5 bg-ucsd-sky text-white text-xs rounded hover:bg-ucsd-blue transition disabled:opacity-50" disabled>
-          Save Locally
-        </button>
         <button onclick="pushToGitHub()" id="btn-push"
                 class="px-3 py-1.5 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition disabled:opacity-50"
                 disabled>
@@ -263,7 +259,6 @@ function selectDataset(accession) {
 
   // Enable buttons
   document.getElementById('btn-fetch').disabled = false;
-  document.getElementById('btn-save').disabled = false;
   document.getElementById('btn-push').disabled = !patConfigured;
   document.getElementById('btn-delete').disabled = false;
   document.getElementById('btn-format').disabled = false;
@@ -356,7 +351,6 @@ function newDataset() {
       document.getElementById('selected-path').textContent = path ? path + '/' : '';
       document.getElementById('selected-badge').classList.remove('hidden');
       document.getElementById('btn-fetch').disabled = false;
-      document.getElementById('btn-save').disabled = false;
       document.getElementById('btn-push').disabled = !patConfigured;
       document.getElementById('btn-delete').disabled = false;
       document.getElementById('btn-format').disabled = false;
@@ -450,54 +444,6 @@ function fetchFromGitHub() {
   });
 }
 
-function saveLocally() {
-  if (!selectedAccession) return;
-  const content = editor.getValue();
-
-  try { JSON.parse(content); } catch (e) {
-    showStatus('Invalid JSON: ' + e.message, 'error');
-    return;
-  }
-
-  showStatus('Saving ' + selectedAccession + '...', 'loading');
-  document.getElementById('btn-save').disabled = true;
-
-  // Parse year/month from selectedPath (e.g. "2020/Oct")
-  let params = 'accession=' + encodeURIComponent(selectedAccession) + '&content=' + encodeURIComponent(content);
-  if (selectedPath) {
-    const parts = selectedPath.split('/');
-    if (parts.length >= 2) {
-      params += '&year=' + encodeURIComponent(parts[0]) + '&month=' + encodeURIComponent(parts[1]);
-    }
-  }
-
-  postJSON('{% url "publications:admin_code_editor_save" %}', params)
-  .then(data => {
-    document.getElementById('btn-save').disabled = false;
-    if (data.ok) {
-      // Ensure it's in the list
-      if (!allDatasets.find(d => d.accession === selectedAccession)) {
-        allDatasets.push({accession: selectedAccession, path: selectedPath});
-        allDatasets.sort((a, b) => a.accession.localeCompare(b.accession));
-        renderDatasetList(allDatasets);
-        document.getElementById('dataset-count').textContent = allDatasets.length;
-      }
-      const lastSavePath = document.getElementById('last-save-path');
-      if (data.path) {
-        lastSavePath.textContent = 'Last local save: ' + data.path;
-        lastSavePath.classList.remove('hidden');
-      }
-      showStatus('Saved ' + selectedAccession + ' locally at ' + (data.path || '[unknown path]') + '.', 'success');
-    } else {
-      showStatus('Error: ' + (data.error || 'Unknown error'), 'error');
-    }
-  })
-  .catch(err => {
-    document.getElementById('btn-save').disabled = false;
-    showStatus('Request failed: ' + err, 'error');
-  });
-}
-
 function pushToGitHub() {
   if (!selectedAccession) return;
   const content = editor.getValue();
@@ -527,6 +473,11 @@ function pushToGitHub() {
     if (data.ok) {
       let msg = 'Saved and pushed ' + selectedAccession + ' to GitHub.';
       if (data.commit_sha) msg += ' Commit: ' + data.commit_sha.substring(0, 8);
+      const lastSavePath = document.getElementById('last-save-path');
+      if (data.path) {
+        lastSavePath.textContent = 'Last local save: ' + data.path;
+        lastSavePath.classList.remove('hidden');
+      }
       showStatus(msg, 'success');
     } else {
       showStatus('Error: ' + (data.error || 'Unknown error'), 'error');
@@ -568,7 +519,6 @@ function deleteDataset() {
       document.getElementById('selected-path').textContent = '';
       document.getElementById('selected-badge').classList.add('hidden');
       document.getElementById('btn-fetch').disabled = true;
-      document.getElementById('btn-save').disabled = true;
       document.getElementById('btn-push').disabled = true;
       document.getElementById('btn-delete').disabled = true;
       document.getElementById('btn-format').disabled = true;

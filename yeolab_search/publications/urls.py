@@ -18,7 +18,9 @@ urlpatterns = [
     path("method/<int:method_id>/", views.method_detail, name="method_detail"),
     path("analysis/", views.analysis_list, name="analysis_list"),
     path("analysis/<int:pipeline_id>/", views.analysis_detail, name="analysis_detail"),
+    path("analysis/<int:pipeline_id>/notebook/", views.analysis_notebook, name="analysis_notebook"),
     path("analysis/dataset/<str:accession>/", views.analysis_detail_by_accession, name="analysis_detail_by_accession"),
+    path("analysis/dataset/<str:accession>/notebook/", views.analysis_notebook_by_accession, name="analysis_notebook_by_accession"),
 
     # Admin / Update
     path("admin/", views.admin_panel, name="admin_panel"),
