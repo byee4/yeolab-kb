@@ -942,21 +942,124 @@ def dataset_download_script(request, accession_id):
 
     sra_urls = [(cat, url) for cat, url in urls if cat == "sra"]
     if sra_urls:
-        lines.append("# --- SRA run files ---")
-        lines.append("# Tip: use 'fasterq-dump' from SRA Toolkit for FASTQ conversion:")
-        lines.append("#   fasterq-dump --split-files SRR_ACCESSION")
-        lines.append("")
-
-        # Collect SRR accessions for fasterq-dump
-        srr_accessions = []
+        selected_sra_urls = {url for _, url in sra_urls}
+        script_runs = []
         for run in runs:
-            if run.srr_accession:
-                srr_accessions.append(run.srr_accession)
+            if not run.srr_accession:
+                continue
+            if run.sra_url and run.sra_url not in selected_sra_urls:
+                continue
 
-        if srr_accessions:
+            parsed_names = _parse_json_field(run.file_names)
+            if isinstance(parsed_names, list):
+                original_names = [str(n).strip() for n in parsed_names if str(n).strip()]
+            elif isinstance(parsed_names, str) and parsed_names.strip():
+                original_names = [parsed_names.strip()]
+            elif isinstance(run.file_names, str) and run.file_names.strip():
+                original_names = [run.file_names.strip()]
+            else:
+                original_names = []
+
+            # Keep only FASTQ-like names and normalize to basename.
+            fastq_names = []
+            for name in original_names:
+                base = name.rstrip("/").split("/")[-1]
+                lower = base.lower()
+                if ".fastq" in lower or ".fq" in lower:
+                    fastq_names.append(base)
+
+            def _normalized_gz_name(name):
+                base = name.rstrip("/").split("/")[-1]
+                if not base.endswith(".gz"):
+                    return f"{base}.gz"
+                return base
+
+            rename_r1 = ""
+            rename_r2 = ""
+            rename_single = ""
+            if fastq_names:
+                tagged_r1 = []
+                tagged_r2 = []
+                untagged = []
+                for name in fastq_names:
+                    low = name.lower()
+                    if any(token in low for token in ("_r1", ".r1.", "-r1", "_1.", "-1.", "read1")):
+                        tagged_r1.append(name)
+                    elif any(token in low for token in ("_r2", ".r2.", "-r2", "_2.", "-2.", "read2")):
+                        tagged_r2.append(name)
+                    else:
+                        untagged.append(name)
+
+                if tagged_r1:
+                    rename_r1 = _normalized_gz_name(tagged_r1[0])
+                if tagged_r2:
+                    rename_r2 = _normalized_gz_name(tagged_r2[0])
+
+                if not rename_r1 and not rename_r2:
+                    if len(fastq_names) >= 2:
+                        rename_r1 = _normalized_gz_name(fastq_names[0])
+                        rename_r2 = _normalized_gz_name(fastq_names[1])
+                    else:
+                        rename_single = _normalized_gz_name(fastq_names[0])
+                elif not rename_r1 and untagged:
+                    rename_r1 = _normalized_gz_name(untagged[0])
+                elif not rename_r2 and untagged:
+                    rename_r2 = _normalized_gz_name(untagged[0])
+
+            script_runs.append({
+                "srr": run.srr_accession,
+                "rename_r1": rename_r1,
+                "rename_r2": rename_r2,
+                "rename_single": rename_single,
+            })
+
+        lines.append("# --- SRA run files ---")
+        lines.append("# Tip: use 'fasterq-dump' from SRA Toolkit for FASTQ conversion")
+        lines.append("#      with optional renaming to original submitted FASTQ names.")
+        lines.append('# Set to 1 to rename SRR outputs (e.g. SRR_1.fastq.gz -> sample_R1.fastq.gz)')
+        lines.append("RENAME_SRA_TO_ORIGINAL=1")
+        lines.append("")
+        lines.append("_compress_if_exists() {")
+        lines.append('  local stem="$1"')
+        lines.append('  if [ -f "${stem}.fastq" ]; then')
+        lines.append('    gzip -f "${stem}.fastq"')
+        lines.append('    echo "${stem}.fastq.gz"')
+        lines.append('    return 0')
+        lines.append("  fi")
+        lines.append('  if [ -f "${stem}.fq" ]; then')
+        lines.append('    gzip -f "${stem}.fq"')
+        lines.append('    echo "${stem}.fq.gz"')
+        lines.append('    return 0')
+        lines.append("  fi")
+        lines.append("  return 1")
+        lines.append("}")
+        lines.append("")
+        if script_runs:
             lines.append("# Option A: Download via SRA Toolkit (recommended)")
-            for srr in srr_accessions:
-                lines.append(f"fasterq-dump --split-files {srr}")
+            for run_meta in script_runs:
+                srr = run_meta["srr"]
+                rename_r1 = run_meta["rename_r1"]
+                rename_r2 = run_meta["rename_r2"]
+                rename_single = run_meta["rename_single"]
+
+                lines.append(f'fasterq-dump --split-files "{srr}"')
+                lines.append(f'gz1="$(_compress_if_exists \'{srr}_1\' || true)"')
+                lines.append(f'gz2="$(_compress_if_exists \'{srr}_2\' || true)"')
+                lines.append(f'gzs="$(_compress_if_exists \'{srr}\' || true)"')
+                if rename_r1:
+                    lines.append('if [ "$RENAME_SRA_TO_ORIGINAL" = "1" ] && [ -n "$gz1" ]; then')
+                    lines.append(f'  mv -f "$gz1" "{rename_r1}"')
+                    lines.append("fi")
+                if rename_r2:
+                    lines.append('if [ "$RENAME_SRA_TO_ORIGINAL" = "1" ] && [ -n "$gz2" ]; then')
+                    lines.append(f'  mv -f "$gz2" "{rename_r2}"')
+                    lines.append("fi")
+                if rename_single:
+                    lines.append('if [ "$RENAME_SRA_TO_ORIGINAL" = "1" ] && [ -n "$gzs" ]; then')
+                    lines.append(f'  mv -f "$gzs" "{rename_single}"')
+                    lines.append("fi")
+                lines.append("")
+
             lines.append("")
             lines.append("# Option B: Direct download (larger .sra files)")
             for cat, url in sra_urls:
