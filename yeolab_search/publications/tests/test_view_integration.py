@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from django.test import RequestFactory, SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from publications import views
@@ -44,6 +44,7 @@ class FakePaginator:
         )
 
 
+@override_settings(GLOBUS_ADMIN_GROUP="")
 class PublicationViewsIntegrationTests(SimpleTestCase):
     def setUp(self):
         self.rf = RequestFactory()

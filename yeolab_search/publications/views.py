@@ -1,16 +1,19 @@
 import json
 import re
 import os
+from functools import wraps
 from collections import defaultdict
 from django.shortcuts import render, get_object_or_404
 from django.db.models import Q, Count, Sum
 from django.db import connection
 from django.core.paginator import Paginator
 from django.core.cache import cache
-from django.http import JsonResponse, HttpResponse, StreamingHttpResponse
+from django.http import JsonResponse, HttpResponse, HttpResponseForbidden, StreamingHttpResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import csrf_protect, csrf_exempt
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
+from django.contrib.auth.views import redirect_to_login
 from .models import (
     Publication, Author, PublicationAuthor, DatasetAccession,
     PublicationDataset, DatasetFile, Grant, PublicationGrant,
@@ -23,6 +26,98 @@ SEARCH_FACETS_CACHE_KEY = "publications_search_facets_v1"
 SEARCH_FACETS_CACHE_TTL = 60 * 10
 CODE_EXAMPLE_PIPELINES_CACHE_KEY = "code_example_pipelines_v1"
 CODE_EXAMPLE_PIPELINES_CACHE_TTL = 60 * 5
+UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+
+
+def _extract_group_ids(value, out):
+    """Recursively collect possible group UUIDs from nested auth metadata."""
+    if value is None:
+        return
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if UUID_RE.fullmatch(token):
+            out.add(token)
+        return
+    if isinstance(value, dict):
+        for key in ("id", "group", "group_id", "uuid"):
+            v = value.get(key)
+            if isinstance(v, str):
+                token = v.strip().lower()
+                if UUID_RE.fullmatch(token):
+                    out.add(token)
+        for nested in value.values():
+            _extract_group_ids(nested, out)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _extract_group_ids(item, out)
+
+
+def _request_globus_group_ids(request):
+    """Best-effort extraction of Globus group IDs from session/social auth metadata."""
+    group_ids = set()
+    user = getattr(request, "user", None)
+
+    # Django group names/ids (if sync is configured)
+    groups_obj = getattr(user, "groups", None)
+    try:
+        groups_iter = groups_obj.all() if hasattr(groups_obj, "all") else (groups_obj or [])
+        for grp in groups_iter:
+            for candidate in (getattr(grp, "name", None), getattr(grp, "id", None)):
+                if candidate is None:
+                    continue
+                token = str(candidate).strip().lower()
+                if UUID_RE.fullmatch(token):
+                    group_ids.add(token)
+    except Exception:
+        pass
+
+    # Session keys used by various auth integrations
+    session = getattr(request, "session", None)
+    if session:
+        for key in ("globus_groups", "groups", "globus_group_ids", "group_memberships"):
+            _extract_group_ids(session.get(key), group_ids)
+
+    # social-auth extra_data payloads
+    social_auth = getattr(user, "social_auth", None)
+    try:
+        records = social_auth.all() if hasattr(social_auth, "all") else []
+    except Exception:
+        records = []
+    for rec in records:
+        extra = getattr(rec, "extra_data", None)
+        if isinstance(extra, dict):
+            for key in ("globus_groups", "groups", "group_memberships"):
+                _extract_group_ids(extra.get(key), group_ids)
+
+    return group_ids
+
+
+def _is_admin_group_member(request):
+    required_group = (getattr(settings, "GLOBUS_ADMIN_GROUP", "") or "").strip().lower()
+    if not required_group:
+        return True
+    return required_group in _request_globus_group_ids(request)
+
+
+def admin_group_required(view_func):
+    """Require authenticated user membership in configured Globus admin group."""
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        user = getattr(request, "user", None)
+        if not getattr(user, "is_authenticated", False):
+            return redirect_to_login(request.get_full_path(), settings.LOGIN_URL)
+        if _is_admin_group_member(request):
+            return view_func(request, *args, **kwargs)
+
+        message = "Forbidden: admin access requires membership in the configured Globus admin group."
+        if request.path.startswith("/api/") or request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JsonResponse({"error": message}, status=403)
+        return HttpResponseForbidden(message)
+
+    return _wrapped
 
 
 def _fts_search(query, limit=500):
@@ -1502,7 +1597,7 @@ def method_detail(request, method_id):
 # Admin panel & PMID submission
 # ============================================================
 
-@login_required
+@admin_group_required
 def admin_panel(request):
     """Admin page with update button and status display."""
     from . import services
@@ -1527,7 +1622,7 @@ def admin_panel(request):
     })
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_start_update(request):
@@ -1554,6 +1649,7 @@ def admin_start_update(request):
         return JsonResponse({"ok": False, "message": str(e)}, status=500)
 
 
+@admin_group_required
 @require_GET
 def admin_update_status(request):
     """Poll endpoint for update progress."""
@@ -1562,7 +1658,7 @@ def admin_update_status(request):
     return JsonResponse(services.get_update_status(upload_id=upload_id or None))
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_upload_encode_json(request):
@@ -1619,7 +1715,7 @@ def admin_upload_encode_json(request):
         return JsonResponse({"ok": False, "message": f"Upload import failed: {exc}"}, status=500)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_upload_encode_experiment_files(request):
@@ -1678,7 +1774,7 @@ def admin_upload_encode_experiment_files(request):
     })
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_stop_encode_json_upload(request):
@@ -1692,7 +1788,7 @@ def admin_stop_encode_json_upload(request):
     return JsonResponse(result, status=400)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_preview_add(request):
@@ -1709,7 +1805,7 @@ def admin_preview_add(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_confirm_add(request):
@@ -1726,7 +1822,7 @@ def admin_confirm_add(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_preview_remove(request):
@@ -1743,7 +1839,7 @@ def admin_preview_remove(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_confirm_remove(request):
@@ -1760,7 +1856,7 @@ def admin_confirm_remove(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@login_required
+@admin_group_required
 def admin_code_editor(request):
     """Dataset browser + JSON editor page."""
     import os
@@ -1780,7 +1876,7 @@ def admin_code_editor(request):
     })
 
 
-@login_required
+@admin_group_required
 @require_GET
 def admin_code_editor_datasets(request):
     """JSON API: list all dataset accessions with paths (for AJAX search)."""
@@ -1788,7 +1884,7 @@ def admin_code_editor_datasets(request):
     return JsonResponse({"ok": True, "datasets": list_datasets_with_paths()})
 
 
-@login_required
+@admin_group_required
 @require_GET
 def admin_code_editor_dataset_content(request, accession):
     """JSON API: return one dataset's JSON content + path + raw_text."""
@@ -1821,7 +1917,7 @@ def admin_code_editor_dataset_content(request, accession):
     })
 
 
-@login_required
+@admin_group_required
 @require_GET
 def admin_code_editor_lookup_date(request, accession):
     """JSON API: look up publication date for an accession (for new dataset creation)."""
@@ -1838,7 +1934,7 @@ def admin_code_editor_lookup_date(request, accession):
     })
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_code_editor_fetch(request):
@@ -1865,7 +1961,7 @@ def admin_code_editor_fetch(request):
         return JsonResponse({"ok": False, "error": str(e)}, status=500)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_code_editor_save(request):
@@ -1904,7 +2000,7 @@ def admin_code_editor_save(request):
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_code_editor_push(request):
@@ -1956,7 +2052,7 @@ def admin_code_editor_push(request):
         }, status=500)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_code_editor_delete(request):
@@ -1998,7 +2094,7 @@ def admin_code_editor_delete(request):
 
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def admin_sync_code_examples(request):
@@ -2062,7 +2158,7 @@ def admin_sync_code_examples(request):
         }, status=500)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def api_submit_pmid(request):
@@ -2085,7 +2181,7 @@ def api_submit_pmid(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@login_required
+@admin_group_required
 @require_POST
 @csrf_protect
 def api_remove_pmid(request):
