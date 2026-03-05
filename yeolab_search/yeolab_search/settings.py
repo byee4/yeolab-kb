@@ -141,11 +141,16 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 SOCIAL_AUTH_GLOBUS_KEY = os.environ.get('GLOBUS_CLIENT_ID', '').strip()
 SOCIAL_AUTH_GLOBUS_SECRET = os.environ.get('GLOBUS_CLIENT_SECRET', '').strip()
+GLOBUS_ADMIN_GROUP = os.environ.get(
+    'GLOBUS_ADMIN_GROUP',
+    'f0c3d900-18af-11f1-8e43-0affecd7d007',
+).strip()
 
 SOCIAL_AUTH_GLOBUS_SCOPE = [
     'openid',
     'profile',
     'email',
+    'urn:globus:auth:scope:groups.api.globus.org:view_my_groups_and_memberships',
     #'urn:globus:auth:scope:auth.globus.org:view_identities',
 ]
 SOCIAL_AUTH_GLOBUS_IGNORE_DEFAULT_SCOPE = True  # Keep requested scopes minimal and deterministic.
