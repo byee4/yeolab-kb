@@ -150,6 +150,7 @@ SOCIAL_AUTH_GLOBUS_SCOPE = [
     'openid',
     'profile',
     'email',
+    'urn:globus:auth:scope:groups.api.globus.org:view_my_groups_and_memberships',
     #'urn:globus:auth:scope:auth.globus.org:view_identities',
 ]
 SOCIAL_AUTH_GLOBUS_IGNORE_DEFAULT_SCOPE = True  # Keep requested scopes minimal and deterministic.
