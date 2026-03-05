@@ -68,6 +68,60 @@ python update_yeolab_db.py --search "eCLIP"
 
 Set `NCBI_API_KEY` env var for 10 req/sec (free at https://www.ncbi.nlm.nih.gov/account/settings/).
 
+## Environment Variables & Secrets
+
+Use `.env.example` as the template. Do not commit real secrets.
+
+### Runtime (web app)
+
+| Variable | Required | Secret | Where to get / how to set |
+|---|---|---|---|
+| `DJANGO_SECRET_KEY` | Yes (production) | Yes | Generate with `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"` |
+| `DJANGO_DEBUG` | Yes | No | Set `False` in production, `True` for local dev |
+| `DJANGO_ALLOWED_HOSTS` | Yes (production) | No | Comma-separated host/domain list for your deployment |
+| `DATABASE_URL` | Yes (production) | Yes | PostgreSQL connection string from your DB provider (AWS RDS, DO Managed DB, etc.) |
+| `YEOLAB_DB_PATH` | Optional | No | Local SQLite path override (defaults to `yeolab_publications.db`) |
+| `CSRF_TRUSTED_ORIGINS` | Yes (production) | No | Comma-separated HTTPS origins serving this app |
+| `SECURE_SSL_REDIRECT` | Recommended | No | `True` if app should force HTTPS; set `False` only if TLS termination is handled upstream |
+
+### Globus authentication and admin gating
+
+| Variable | Required | Secret | Where to get / how to set |
+|---|---|---|---|
+| `GLOBUS_CLIENT_ID` | Yes (if login enabled) | No | Register app at [app.globus.org/settings/developers](https://app.globus.org/settings/developers) |
+| `GLOBUS_CLIENT_SECRET` | Yes (if login enabled) | Yes | Same Globus app registration page |
+| `SOCIAL_AUTH_GLOBUS_REDIRECT_URI` | Recommended | No | Must exactly match registered callback (example: `https://yourdomain/complete/globus/`) |
+| `GLOBUS_ADMIN_GROUP` | Yes (for admin lock-down) | No | Globus Group UUID for admin users (copy from group details/URL in Globus Groups) |
+
+### GitHub sync for Code Examples Editor
+
+| Variable | Required | Secret | Where to get / how to set |
+|---|---|---|---|
+| `GITHUB_PAT` | Required for private repo or write/push | Yes | Create token in GitHub settings (fine-grained token recommended, repo contents read/write) |
+| `GITHUB_REPO` | Optional | No | Repo slug containing `code_examples/` (default `byee4/yeolab-publications-db`) |
+| `GITHUB_BRANCH` | Optional | No | Branch to fetch/push (default `main`) |
+| `CODE_EXAMPLES_REPO_DIR` | Optional | No | Local path to cloned repo (deployment default `/app/yeolab-publications-db`) |
+| `CODE_EXAMPLES_DIR` | Optional | No | Direct override for `code_examples` directory path |
+| `CODE_EXAMPLES_REFRESH_INTERVAL_SEC` | Optional | No | Registry refresh interval for code examples cache |
+
+### Data pipeline and processing knobs
+
+| Variable | Required | Secret | Where to get / how to set |
+|---|---|---|---|
+| `NCBI_API_KEY` | Optional but recommended | Yes | Generate from [NCBI account settings](https://www.ncbi.nlm.nih.gov/account/settings/) |
+| `ENTREZ_EMAIL` | Recommended | No | Contact email used for NCBI Entrez usage etiquette |
+| `ENCODE_SOFTWARE_RESOLVE_DELAY` | Optional | No | Delay (seconds) between ENCODE software resolution calls |
+
+### Deployment / CI secrets (outside app runtime)
+
+| Variable | Required | Secret | Where to get / how to set |
+|---|---|---|---|
+| `AWS_ACCESS_KEY_ID` | AWS deploy workflow only | Yes | IAM user/role with EB/ECR deployment permissions |
+| `AWS_SECRET_ACCESS_KEY` | AWS deploy workflow only | Yes | IAM credential pair for the above identity |
+| `DIGITALOCEAN_ACCESS_TOKEN` | DO deploy workflow only | Yes | Personal access token from DigitalOcean API settings |
+| `DO_APP_ID` | DO deploy workflow only | No | App ID from DigitalOcean App Platform |
+| `GUNICORN_TIMEOUT` | Optional | No | Gunicorn worker timeout seconds (default in this repo: `600`) |
+
 ### 3. Web interface + API
 
 A Django app is included for browsing, searching, and programmatic access.
@@ -120,6 +174,10 @@ pip install anthropic openai   # if not already installed
 ```
 
 Users provide their own Anthropic or OpenAI API key (stored in browser localStorage only — never sent to or saved on the server). You can select provider and model in the chat UI. Both providers have access to 9 tools: `search_publications`, `get_publication`, `search_authors`, `get_author`, `search_datasets`, `get_dataset`, `get_database_stats`, `search_grants`, and `search_pipelines`. Responses stream in real time via Server-Sent Events.
+
+How to get a key:
+- Anthropic: Sign in at [console.anthropic.com](https://console.anthropic.com/), open [API Keys](https://console.anthropic.com/settings/keys), create a key, and copy the `sk-ant-...` value.
+- OpenAI: Sign in at [platform.openai.com](https://platform.openai.com/), open [API keys](https://platform.openai.com/api-keys), create a secret key, and copy the `sk-...` value.
 
 Example questions: "What are the lab's most recent publications?", "Which datasets use eCLIP?", "Who are Gene Yeo's top collaborators?", "Summarize the lab's work on TDP-43".
 
