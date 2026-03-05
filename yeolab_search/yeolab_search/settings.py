@@ -154,6 +154,10 @@ SOCIAL_AUTH_GLOBUS_SCOPE = [
     #'urn:globus:auth:scope:auth.globus.org:view_identities',
 ]
 SOCIAL_AUTH_GLOBUS_IGNORE_DEFAULT_SCOPE = True  # Keep requested scopes minimal and deterministic.
+SOCIAL_AUTH_GLOBUS_SESSIONS = True  # Required for framework-managed allowed-groups checks.
+SOCIAL_AUTH_GLOBUS_ALLOWED_GROUPS = (
+    [{'name': 'Yeo Lab Admins', 'uuid': GLOBUS_ADMIN_GROUP}] if GLOBUS_ADMIN_GROUP else []
+)
 # In reverse-proxy environments (e.g., App Platform), force HTTPS callback
 # generation so OAuth redirect_uri exactly matches provider registration.
 SOCIAL_AUTH_REDIRECT_IS_HTTPS = not DEBUG
