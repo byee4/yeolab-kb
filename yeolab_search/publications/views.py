@@ -1,6 +1,7 @@
 import json
 import re
 import os
+import csv
 from collections import defaultdict
 from django.shortcuts import render, get_object_or_404
 from django.db.models import Q, Count, Sum
@@ -449,6 +450,47 @@ def _parse_json_field(value):
         return None
 
 
+def _parse_json_text_list(value):
+    """Parse a JSON/string field into a normalized string list."""
+    if not value:
+        return []
+    parsed = _parse_json_field(value)
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    if isinstance(parsed, str) and parsed.strip():
+        return [parsed.strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _parse_json_text_dict(value):
+    """Parse a JSON field into a dict[str, str]."""
+    parsed = _parse_json_field(value)
+    if not isinstance(parsed, dict):
+        return {}
+    out = {}
+    for k, v in parsed.items():
+        key = str(k).strip()
+        if not key:
+            continue
+        out[key] = "" if v is None else str(v).strip()
+    return out
+
+
+def _join_unique(items):
+    """Join unique, non-empty strings while preserving order."""
+    seen = set()
+    out = []
+    for item in items:
+        val = str(item).strip()
+        if not val or val in seen:
+            continue
+        seen.add(val)
+        out.append(val)
+    return ", ".join(out)
+
+
 def dataset_detail(request, accession_id):
     """Detail view for a single dataset accession."""
     dataset = get_object_or_404(DatasetAccession, accession_id=accession_id)
@@ -763,6 +805,234 @@ def dataset_detail(request, accession_id):
         "encode_file_accession_count": len(encode_file_accessions),
         "encode_total_file_size_bytes": encode_total_file_size_bytes,
     })
+
+
+@require_GET
+def dataset_export_sra_csv(request, accession_id):
+    """Export SRA experiment/run metadata for a dataset as CSV."""
+    dataset = get_object_or_404(DatasetAccession, accession_id=accession_id)
+
+    sra_experiments = list(
+        SraExperiment.objects.filter(
+            Q(parent_accession=dataset) | Q(srx_accession=dataset.accession)
+        ).order_by("srx_accession")
+    )
+    experiment_ids = [exp.experiment_id for exp in sra_experiments]
+    runs_by_experiment = defaultdict(list)
+    if experiment_ids:
+        runs = (
+            SraRun.objects.filter(experiment_id__in=experiment_ids)
+            .order_by("experiment_id", "srr_accession")
+        )
+        for run in runs:
+            runs_by_experiment[run.experiment_id].append(run)
+
+    direct_sra_runs = []
+    if dataset.accession_type == "SRR":
+        direct_sra_runs = list(
+            SraRun.objects.filter(srr_accession=dataset.accession).order_by("srr_accession")
+        )
+
+    dataset_files = list(
+        DatasetFile.objects.filter(accession=dataset).order_by("file_type", "file_name")
+    )
+    supplementary_files = _parse_json_text_list(dataset.supplementary_files)
+    dataset_file_names = [f.file_name for f in dataset_files if f.file_name]
+    dataset_file_urls = [f.file_url for f in dataset_files if f.file_url]
+
+    parsed_experiment_attrs = {}
+    parsed_experiment_original_files = {}
+    sample_attribute_keys = set()
+    for exp in sra_experiments:
+        attrs = _parse_json_text_dict(exp.sample_attributes)
+        parsed_experiment_attrs[exp.experiment_id] = attrs
+        sample_attribute_keys.update(attrs.keys())
+        parsed_experiment_original_files[exp.experiment_id] = _parse_json_text_list(exp.original_file_names)
+    sample_attribute_keys = sorted(sample_attribute_keys, key=lambda s: s.lower())
+
+    dataset_experiment_types = _parse_json_text_list(dataset.experiment_types)
+    dataset_relations = _parse_json_text_list(dataset.relations)
+    dataset_sample_ids = _parse_json_text_list(dataset.sample_ids)
+    dataset_citation_pmids = _parse_json_text_list(dataset.citation_pmids)
+
+    base_columns = [
+        "dataset_accession_id",
+        "dataset_accession",
+        "dataset_accession_type",
+        "dataset_database",
+        "dataset_title",
+        "dataset_organism",
+        "dataset_platform",
+        "dataset_summary",
+        "dataset_overall_design",
+        "dataset_num_samples",
+        "dataset_submission_date",
+        "dataset_last_update_date",
+        "dataset_status",
+        "dataset_contact_name",
+        "dataset_contact_institute",
+        "dataset_geo_url",
+        "dataset_sra_url",
+        "dataset_experiment_types",
+        "dataset_relations",
+        "dataset_sample_ids",
+        "dataset_citation_pmids",
+        "dataset_supplementary_files",
+        "dataset_file_names",
+        "dataset_file_urls",
+        "dataset_file_types",
+        "dataset_total_file_size_bytes",
+        "geo_accession_id",
+        "srx_accession",
+        "srr_accession",
+        "experiment_id",
+        "run_id",
+        "assay",
+        "platform",
+        "instrument",
+        "organism",
+        "source_gse",
+        "study_accession",
+        "bioproject",
+        "biosample",
+        "sample_accession",
+        "sample_name",
+        "sample_alias",
+        "library_name",
+        "library_source",
+        "library_selection",
+        "library_layout",
+        "experiment_title",
+        "experiment_alias",
+        "run_alias",
+        "run_total_spots",
+        "run_total_bases",
+        "run_size_mb",
+        "run_size_bytes",
+        "run_published_date",
+        "run_sra_url",
+        "run_cloud_urls",
+        "experiment_original_filenames",
+        "run_filenames",
+        "filenames",
+    ]
+    fieldnames = base_columns + [f"sample_attribute:{k}" for k in sample_attribute_keys]
+
+    dataset_file_types = [f.file_type for f in dataset_files if f.file_type]
+    dataset_total_file_size_bytes = sum(f.file_size_bytes or 0 for f in dataset_files)
+
+    def make_row(exp=None, run=None):
+        exp_attrs = parsed_experiment_attrs.get(exp.experiment_id, {}) if exp else {}
+        exp_original_names = parsed_experiment_original_files.get(exp.experiment_id, []) if exp else []
+        run_names = _parse_json_text_list(run.file_names) if run else []
+        run_cloud_urls = _parse_json_text_list(run.cloud_urls) if run else []
+        run_size_mb = run.size_mb if run and run.size_mb is not None else ""
+        run_size_bytes = ""
+        if run and run.size_mb is not None:
+            try:
+                run_size_bytes = int(float(run.size_mb) * 1024 * 1024)
+            except (TypeError, ValueError):
+                run_size_bytes = ""
+
+        geo_accession = ""
+        if dataset.accession_type == "GSE":
+            geo_accession = dataset.accession
+        elif exp and exp.source_gse:
+            geo_accession = exp.source_gse
+
+        row = {
+            "dataset_accession_id": dataset.accession_id,
+            "dataset_accession": dataset.accession,
+            "dataset_accession_type": dataset.accession_type,
+            "dataset_database": dataset.database,
+            "dataset_title": dataset.title or "",
+            "dataset_organism": dataset.organism or "",
+            "dataset_platform": dataset.platform or "",
+            "dataset_summary": dataset.summary or "",
+            "dataset_overall_design": dataset.overall_design or "",
+            "dataset_num_samples": dataset.num_samples if dataset.num_samples is not None else "",
+            "dataset_submission_date": dataset.submission_date or "",
+            "dataset_last_update_date": dataset.last_update_date or "",
+            "dataset_status": dataset.status or "",
+            "dataset_contact_name": dataset.contact_name or "",
+            "dataset_contact_institute": dataset.contact_institute or "",
+            "dataset_geo_url": dataset.geo_url or "",
+            "dataset_sra_url": dataset.sra_url or "",
+            "dataset_experiment_types": _join_unique(dataset_experiment_types),
+            "dataset_relations": _join_unique(dataset_relations),
+            "dataset_sample_ids": _join_unique(dataset_sample_ids),
+            "dataset_citation_pmids": _join_unique(dataset_citation_pmids),
+            "dataset_supplementary_files": _join_unique(supplementary_files),
+            "dataset_file_names": _join_unique(dataset_file_names),
+            "dataset_file_urls": _join_unique(dataset_file_urls),
+            "dataset_file_types": _join_unique(dataset_file_types),
+            "dataset_total_file_size_bytes": dataset_total_file_size_bytes,
+            "geo_accession_id": geo_accession,
+            "srx_accession": (
+                exp.srx_accession if exp else (run.srx_accession if run and run.srx_accession else "")
+            ),
+            "srr_accession": run.srr_accession if run else "",
+            "experiment_id": exp.experiment_id if exp else "",
+            "run_id": run.run_id if run else "",
+            "assay": exp.library_strategy if exp else "",
+            "platform": exp.platform if exp else "",
+            "instrument": exp.instrument_model if exp else "",
+            "organism": exp.organism if exp else "",
+            "source_gse": exp.source_gse if exp else "",
+            "study_accession": exp.study_accession if exp else "",
+            "bioproject": exp.bioproject if exp else "",
+            "biosample": exp.biosample if exp else "",
+            "sample_accession": exp.sample_accession if exp else "",
+            "sample_name": exp.sample_name if exp else "",
+            "sample_alias": exp.sample_alias if exp else "",
+            "library_name": exp.library_name if exp else "",
+            "library_source": exp.library_source if exp else "",
+            "library_selection": exp.library_selection if exp else "",
+            "library_layout": exp.library_layout if exp else "",
+            "experiment_title": exp.title if exp else "",
+            "experiment_alias": exp.alias if exp else "",
+            "run_alias": run.alias if run else "",
+            "run_total_spots": run.total_spots if run and run.total_spots is not None else "",
+            "run_total_bases": run.total_bases if run and run.total_bases is not None else "",
+            "run_size_mb": run_size_mb,
+            "run_size_bytes": run_size_bytes,
+            "run_published_date": run.published_date if run else "",
+            "run_sra_url": run.sra_url if run else "",
+            "run_cloud_urls": _join_unique(run_cloud_urls),
+            "experiment_original_filenames": _join_unique(exp_original_names),
+            "run_filenames": _join_unique(run_names),
+            "filenames": _join_unique(exp_original_names + run_names),
+        }
+
+        for attr_key in sample_attribute_keys:
+            row[f"sample_attribute:{attr_key}"] = exp_attrs.get(attr_key, "")
+        return row
+
+    rows = []
+    for exp in sra_experiments:
+        exp_runs = runs_by_experiment.get(exp.experiment_id, [])
+        if not exp_runs:
+            rows.append(make_row(exp=exp, run=None))
+            continue
+        for run in exp_runs:
+            rows.append(make_row(exp=exp, run=run))
+
+    if not sra_experiments and direct_sra_runs:
+        for run in direct_sra_runs:
+            rows.append(make_row(exp=None, run=run))
+
+    if not rows:
+        rows.append(make_row(exp=None, run=None))
+
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = (
+        f'attachment; filename="{dataset.accession}_sra_experiments_runs.csv"'
+    )
+    writer = csv.DictWriter(response, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return response
 
 
 # ============================================================

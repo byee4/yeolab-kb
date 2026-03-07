@@ -277,6 +277,113 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
         kwargs = import_mock.call_args.kwargs
         self.assertTrue(kwargs["override_existing"])
 
+    @patch("publications.views.get_object_or_404")
+    def test_dataset_export_sra_csv_includes_dynamic_sample_attributes(self, get_object_or_404_mock):
+        class FakeOrdered:
+            def __init__(self, records):
+                self.records = records
+
+            def order_by(self, *args, **kwargs):
+                return self
+
+            def __iter__(self):
+                return iter(self.records)
+
+        dataset = SimpleNamespace(
+            accession_id=10,
+            accession="GSE12345",
+            accession_type="GSE",
+            database="GEO",
+            title="Dataset Title",
+            organism="Homo sapiens",
+            platform="ILLUMINA",
+            summary="Summary",
+            overall_design="Design",
+            num_samples=2,
+            submission_date="2024-01-01",
+            last_update_date="2024-01-02",
+            status="Public",
+            contact_name="Jane Doe",
+            contact_institute="UCSD",
+            experiment_types='["RNA-Seq"]',
+            relations='["SRA: SRP000001"]',
+            sample_ids='["GSM1","GSM2"]',
+            citation_pmids='["123456"]',
+            supplementary_files='["ftp://example.org/file1.txt"]',
+            geo_url="https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE12345",
+            sra_url="",
+        )
+        exp = SimpleNamespace(
+            experiment_id=7,
+            srx_accession="SRX000007",
+            source_gse="GSE12345",
+            sample_attributes='{"cell_type":"Neuron","treatment":"DMSO"}',
+            original_file_names='["sample_R1.fastq.gz","sample_R2.fastq.gz"]',
+            library_strategy="RNA-Seq",
+            platform="ILLUMINA",
+            instrument_model="NovaSeq 6000",
+            organism="Homo sapiens",
+            study_accession="SRP000001",
+            bioproject="PRJNA1",
+            biosample="SAMN1",
+            sample_accession="SRS1",
+            sample_name="Sample 1",
+            sample_alias="Alias 1",
+            library_name="Lib1",
+            library_source="TRANSCRIPTOMIC",
+            library_selection="cDNA",
+            library_layout="PAIRED",
+            title="Experiment title",
+            alias="Experiment alias",
+        )
+        run = SimpleNamespace(
+            run_id=9,
+            experiment_id=7,
+            srr_accession="SRR000009",
+            srx_accession="SRX000007",
+            alias="Run alias",
+            total_spots=100,
+            total_bases=200,
+            size_mb=1.5,
+            published_date="2024-01-03",
+            sra_url="https://www.ncbi.nlm.nih.gov/sra/SRR000009",
+            cloud_urls='["s3://bucket/SRR000009.sra"]',
+            file_names='["sample_R1.fastq.gz","sample_R2.fastq.gz"]',
+        )
+        dataset_file = SimpleNamespace(
+            file_name="extra.bam",
+            file_url="https://example.org/extra.bam",
+            file_type="bam",
+            file_size_bytes=1234,
+        )
+
+        get_object_or_404_mock.return_value = dataset
+        with (
+            patch.object(views.SraExperiment, "objects") as exp_objects,
+            patch.object(views.SraRun, "objects") as run_objects,
+            patch.object(views.DatasetFile, "objects") as file_objects,
+        ):
+            exp_objects.filter.return_value = FakeOrdered([exp])
+            run_objects.filter.side_effect = [
+                FakeOrdered([run]),  # experiment_id__in
+            ]
+            file_objects.filter.return_value = FakeOrdered([dataset_file])
+
+            response = views.dataset_export_sra_csv(
+                self.rf.get("/dataset/10/export-sra.csv"), accession_id=10
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        body = response.content.decode("utf-8")
+        self.assertIn("geo_accession_id", body)
+        self.assertIn("srr_accession", body)
+        self.assertIn("run_size_bytes", body)
+        self.assertIn("sample_attribute:cell_type", body)
+        self.assertIn("sample_attribute:treatment", body)
+        self.assertIn("SRR000009", body)
+        self.assertIn("sample_R1.fastq.gz, sample_R2.fastq.gz", body)
+
     @patch("publications.services.request_stop_encode_json_upload")
     def test_admin_stop_encode_json_upload(self, stop_mock):
         stop_mock.return_value = {"ok": True, "message": "Stop requested."}
