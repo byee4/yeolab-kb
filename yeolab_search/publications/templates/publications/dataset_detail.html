@@ -22,6 +22,9 @@
       <a href="{{ dataset.sra_url }}" target="_blank" rel="noopener"
          class="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700 transition">View on SRA</a>
       {% endif %}
+      <a href="{% url 'publications:dataset_export_sra_csv' dataset.accession_id %}"
+         class="px-3 py-1 bg-teal-600 text-white text-xs rounded hover:bg-teal-700 transition"
+         title="Export SRA experiment and run metadata as CSV">Export SRA CSV</a>
       {% if is_encode and encode_portal_url %}
       <a href="{{ encode_portal_url }}" target="_blank" rel="noopener"
          class="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700 transition">View on ENCODE</a>
