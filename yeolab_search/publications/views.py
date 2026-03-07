@@ -491,6 +491,20 @@ def _join_unique(items):
     return ", ".join(out)
 
 
+def _split_csv_tokens(items):
+    """Split list items on commas and return unique, trimmed tokens."""
+    tokens = []
+    seen = set()
+    for item in items or []:
+        for part in str(item).split(","):
+            token = part.strip()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+    return tokens
+
+
 def dataset_detail(request, accession_id):
     """Detail view for a single dataset accession."""
     dataset = get_object_or_404(DatasetAccession, accession_id=accession_id)
@@ -838,7 +852,6 @@ def dataset_export_sra_csv(request, accession_id):
     )
     supplementary_files = _parse_json_text_list(dataset.supplementary_files)
     dataset_file_names = [f.file_name for f in dataset_files if f.file_name]
-    dataset_file_urls = [f.file_url for f in dataset_files if f.file_url]
 
     parsed_experiment_attrs = {}
     parsed_experiment_original_files = {}
@@ -879,16 +892,11 @@ def dataset_export_sra_csv(request, accession_id):
         "dataset_citation_pmids",
         "dataset_supplementary_files",
         "dataset_file_names",
-        "dataset_file_urls",
         "dataset_file_types",
-        "dataset_total_file_size_bytes",
         "geo_accession_id",
         "srx_accession",
         "srr_accession",
-        "experiment_id",
-        "run_id",
         "assay",
-        "platform",
         "instrument",
         "organism",
         "source_gse",
@@ -911,7 +919,6 @@ def dataset_export_sra_csv(request, accession_id):
         "run_size_bytes",
         "run_published_date",
         "run_sra_url",
-        "run_cloud_urls",
         "experiment_original_filenames",
         "run_filenames",
         "filenames",
@@ -919,13 +926,12 @@ def dataset_export_sra_csv(request, accession_id):
     fieldnames = base_columns + [f"sample_attribute:{k}" for k in sample_attribute_keys]
 
     dataset_file_types = [f.file_type for f in dataset_files if f.file_type]
-    dataset_total_file_size_bytes = sum(f.file_size_bytes or 0 for f in dataset_files)
-
-    def make_row(exp=None, run=None):
+    def make_row(exp=None, run=None, run_filename_override=""):
         exp_attrs = parsed_experiment_attrs.get(exp.experiment_id, {}) if exp else {}
         exp_original_names = parsed_experiment_original_files.get(exp.experiment_id, []) if exp else []
-        run_names = _parse_json_text_list(run.file_names) if run else []
-        run_cloud_urls = _parse_json_text_list(run.cloud_urls) if run else []
+        run_names = _split_csv_tokens(_parse_json_text_list(run.file_names)) if run else []
+        if run_filename_override:
+            run_names = [run_filename_override]
         run_size_mb = run.size_mb if run and run.size_mb is not None else ""
         run_size_bytes = ""
         if run and run.size_mb is not None:
@@ -964,18 +970,13 @@ def dataset_export_sra_csv(request, accession_id):
             "dataset_citation_pmids": _join_unique(dataset_citation_pmids),
             "dataset_supplementary_files": _join_unique(supplementary_files),
             "dataset_file_names": _join_unique(dataset_file_names),
-            "dataset_file_urls": _join_unique(dataset_file_urls),
             "dataset_file_types": _join_unique(dataset_file_types),
-            "dataset_total_file_size_bytes": dataset_total_file_size_bytes,
             "geo_accession_id": geo_accession,
             "srx_accession": (
                 exp.srx_accession if exp else (run.srx_accession if run and run.srx_accession else "")
             ),
             "srr_accession": run.srr_accession if run else "",
-            "experiment_id": exp.experiment_id if exp else "",
-            "run_id": run.run_id if run else "",
             "assay": exp.library_strategy if exp else "",
-            "platform": exp.platform if exp else "",
             "instrument": exp.instrument_model if exp else "",
             "organism": exp.organism if exp else "",
             "source_gse": exp.source_gse if exp else "",
@@ -998,7 +999,6 @@ def dataset_export_sra_csv(request, accession_id):
             "run_size_bytes": run_size_bytes,
             "run_published_date": run.published_date if run else "",
             "run_sra_url": run.sra_url if run else "",
-            "run_cloud_urls": _join_unique(run_cloud_urls),
             "experiment_original_filenames": _join_unique(exp_original_names),
             "run_filenames": _join_unique(run_names),
             "filenames": _join_unique(exp_original_names + run_names),
@@ -1015,11 +1015,21 @@ def dataset_export_sra_csv(request, accession_id):
             rows.append(make_row(exp=exp, run=None))
             continue
         for run in exp_runs:
-            rows.append(make_row(exp=exp, run=run))
+            split_names = _split_csv_tokens(_parse_json_text_list(run.file_names))
+            if split_names:
+                for run_name in split_names:
+                    rows.append(make_row(exp=exp, run=run, run_filename_override=run_name))
+            else:
+                rows.append(make_row(exp=exp, run=run))
 
     if not sra_experiments and direct_sra_runs:
         for run in direct_sra_runs:
-            rows.append(make_row(exp=None, run=run))
+            split_names = _split_csv_tokens(_parse_json_text_list(run.file_names))
+            if split_names:
+                for run_name in split_names:
+                    rows.append(make_row(exp=None, run=run, run_filename_override=run_name))
+            else:
+                rows.append(make_row(exp=None, run=run))
 
     if not rows:
         rows.append(make_row(exp=None, run=None))

@@ -1,3 +1,5 @@
+import csv
+import io
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -348,7 +350,7 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
             published_date="2024-01-03",
             sra_url="https://www.ncbi.nlm.nih.gov/sra/SRR000009",
             cloud_urls='["s3://bucket/SRR000009.sra"]',
-            file_names='["sample_R1.fastq.gz","sample_R2.fastq.gz"]',
+            file_names='["NTIA_1_S1_L001_R1_001.fastq.gz, SRR13663711, SRR13663711.lite"]',
         )
         dataset_file = SimpleNamespace(
             file_name="extra.bam",
@@ -376,13 +378,26 @@ class PublicationViewsIntegrationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "text/csv")
         body = response.content.decode("utf-8")
+        header = body.splitlines()[0]
         self.assertIn("geo_accession_id", body)
         self.assertIn("srr_accession", body)
         self.assertIn("run_size_bytes", body)
         self.assertIn("sample_attribute:cell_type", body)
         self.assertIn("sample_attribute:treatment", body)
         self.assertIn("SRR000009", body)
-        self.assertIn("sample_R1.fastq.gz, sample_R2.fastq.gz", body)
+        self.assertNotIn("run_cloud_urls", header)
+        self.assertNotIn("dataset_total_file_size_bytes", header)
+        self.assertNotIn("experiment_id", header)
+        self.assertNotIn("run_id", header)
+        self.assertNotIn(",platform,", f",{header},")
+        self.assertNotIn("dataset_file_urls", header)
+
+        rows = list(csv.DictReader(io.StringIO(body)))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(
+            {row["run_filenames"] for row in rows},
+            {"NTIA_1_S1_L001_R1_001.fastq.gz", "SRR13663711", "SRR13663711.lite"},
+        )
 
     @patch("publications.services.request_stop_encode_json_upload")
     def test_admin_stop_encode_json_upload(self, stop_mock):
